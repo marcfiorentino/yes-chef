@@ -50,19 +50,36 @@ public final class PantryViewModel {
 
     @discardableResult
     public func addDetectedEntries(_ entries: [DetectedPantryEntry], source: PantryEntrySource, rawInput: String? = nil) -> [PantryItem] {
-        let added = entries.map { entry in
-            PantryItem(
-                ingredientName: entry.matchedIngredientName,
-                quantity: "—",
+        var seenKeys = Set(pantryItems.map { dedupeKey(for: $0.canonicalIngredientID, name: $0.canonicalIngredientName ?? $0.ingredientName) })
+        var added: [PantryItem] = []
+
+        for entry in entries where entry.isIncluded {
+            let canonicalName = IngredientCatalog.canonicalName(for: entry.matchedIngredientName)
+            let canonicalID = entry.matchedIngredientID ?? IngredientCatalog.canonicalIdentifier(for: canonicalName)
+            let key = dedupeKey(for: canonicalID, name: canonicalName)
+            guard seenKeys.insert(key).inserted else { continue }
+
+            let quantity = entry.quantity.trimmingCharacters(in: .whitespacesAndNewlines)
+            added.append(PantryItem(
+                ingredientName: canonicalName,
+                quantity: quantity.isEmpty ? "1" : quantity,
                 source: source,
                 rawInput: rawInput ?? entry.rawText,
-                canonicalIngredientID: entry.matchedIngredientID,
-                canonicalIngredientName: entry.matchedIngredientName,
+                canonicalIngredientID: canonicalID,
+                canonicalIngredientName: canonicalName,
                 barcode: entry.barcode
-            )
+            ))
         }
+
         pantryItems.insert(contentsOf: added.reversed(), at: 0)
         return added
+    }
+
+    private func dedupeKey(for canonicalID: String?, name: String) -> String {
+        if let canonicalID, !canonicalID.isEmpty {
+            return "id:\(canonicalID.lowercased())"
+        }
+        return "name:\(IngredientCatalog.canonicalName(for: name).lowercased())"
     }
 
     public func removeItems(at offsets: IndexSet) {

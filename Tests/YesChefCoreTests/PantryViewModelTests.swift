@@ -1,0 +1,39 @@
+import XCTest
+@testable import YesChefCore
+
+final class PantryViewModelTests: XCTestCase {
+    func testAddDetectedEntriesRespectsInclusionAndQuantity() {
+        let viewModel = PantryViewModel()
+        let entries = [
+            DetectedPantryEntry(rawText: "eggs", matchedIngredientName: "Egg", matchedIngredientID: "egg", confidence: .high, quantity: "2", isIncluded: true),
+            DetectedPantryEntry(rawText: "milk", matchedIngredientName: "Milk", matchedIngredientID: "milk", confidence: .high, quantity: "1", isIncluded: false)
+        ]
+
+        let added = viewModel.addDetectedEntries(entries, source: .spoken, rawInput: "eggs, milk")
+
+        XCTAssertEqual(added.count, 1)
+        XCTAssertEqual(added.first?.ingredientName, "Egg")
+        XCTAssertEqual(added.first?.quantity, "2")
+    }
+
+    func testAddDetectedEntriesDedupesAgainstExistingPantryItems() {
+        let existing = PantryItem(
+            ingredientName: "Egg",
+            quantity: "1",
+            source: .typed,
+            canonicalIngredientID: "egg",
+            canonicalIngredientName: "Egg"
+        )
+        let viewModel = PantryViewModel(pantryItems: [existing])
+        let entries = [
+            DetectedPantryEntry(rawText: "eggs", matchedIngredientName: "Egg", matchedIngredientID: "egg", confidence: .high),
+            DetectedPantryEntry(rawText: "whole milk", matchedIngredientName: "Milk", matchedIngredientID: "milk", confidence: .high)
+        ]
+
+        let added = viewModel.addDetectedEntries(entries, source: .spoken)
+
+        XCTAssertEqual(added.count, 1)
+        XCTAssertEqual(added.first?.ingredientName, "Milk")
+        XCTAssertEqual(viewModel.pantryItems.count, 2)
+    }
+}

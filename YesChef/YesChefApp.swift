@@ -82,12 +82,15 @@ final class YesChefAppModel: ObservableObject {
         objectWillChange.send()
     }
 
-    func addDetectedPantryEntries(_ entries: [DetectedPantryEntry], source: PantryEntrySource, rawInput: String? = nil) {
-        guard !entries.isEmpty else { return }
-        _ = pantry.addDetectedEntries(entries, source: source, rawInput: rawInput)
+    @discardableResult
+    func addDetectedPantryEntries(_ entries: [DetectedPantryEntry], source: PantryEntrySource, rawInput: String? = nil) -> [PantryItem] {
+        guard !entries.isEmpty else { return [] }
+        let added = pantry.addDetectedEntries(entries, source: source, rawInput: rawInput)
+        guard !added.isEmpty else { return [] }
         save(pantry.pantryItems, key: Self.pantryKey)
         refreshMatches()
         objectWillChange.send()
+        return added
     }
 
     func removePantryItems(at offsets: IndexSet) {
@@ -299,6 +302,9 @@ struct PantryTabView: View {
     @State private var reviewEntries: [DetectedPantryEntry] = []
     @State private var reviewSource: PantryEntrySource = .spoken
     @State private var reviewRawInput: String?
+    @State private var reviewSheetPresented = false
+    @State private var speakErrorHint: String?
+    @State private var addBannerMessage: String?
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
@@ -363,16 +369,33 @@ struct PantryTabView: View {
             }
             .navigationTitle("Pantry")
             .listStyle(.insetGrouped)
-            .sheet(isPresented: Binding(
-                get: { !reviewEntries.isEmpty },
-                set: { isPresented in if !isPresented { reviewEntries = [] } }
-            )) {
+            .sheet(isPresented: $reviewSheetPresented, onDismiss: {
+                reviewEntries = []
+                reviewRawInput = nil
+            }) {
                 NavigationStack {
                     ReviewConfirmView(entries: $reviewEntries) {
-                        appModel.addDetectedPantryEntries(reviewEntries, source: reviewSource, rawInput: reviewRawInput)
-                        reviewEntries = []
-                        reviewRawInput = nil
+                        let addedItems = appModel.addDetectedPantryEntries(reviewEntries, source: reviewSource, rawInput: reviewRawInput)
+                        let addedCount = addedItems.count
+                        if addedCount > 0 {
+                            speechVM.transcript = ""
+                            showAddBanner(count: addedCount)
+                        }
+                        reviewSheetPresented = false
                     }
+                }
+            }
+            .overlay(alignment: .top) {
+                if let addBannerMessage {
+                    Text(addBannerMessage)
+                        .font(.subheadline.bold())
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.green.opacity(0.9))
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
             .onReceive(scannerVM.$detectedCode.compactMap { $0 }) { code in
@@ -381,6 +404,7 @@ struct PantryTabView: View {
                     reviewEntries = [entry]
                     reviewSource = .scanned
                     reviewRawInput = entry.rawText
+                    reviewSheetPresented = true
                 }
             }
         }
@@ -482,15 +506,43 @@ struct PantryTabView: View {
             }
 
             if !speechVM.isRecording, !speechVM.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button("Review & Confirm") {
-                    reviewEntries = PantryInputProcessor.detectEntries(from: speechVM.transcript)
+                Button("Review & Add to Pantry") {
+                    let detected = PantryInputProcessor.detectEntries(from: speechVM.transcript)
+                    guard !detected.isEmpty else {
+                        speakErrorHint = "Didn’t catch that—try commas like ‘milk, eggs, basil’."
+                        return
+                    }
+                    speakErrorHint = nil
+                    reviewEntries = detected
                     reviewSource = .spoken
                     reviewRawInput = speechVM.transcript
+                    reviewSheetPresented = true
                 }
                 .buttonStyle(.borderedProminent)
             }
+
+            if let speakErrorHint {
+                Text(speakErrorHint)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
         .padding(.vertical, 6)
+    }
+
+    private func showAddBanner(count: Int) {
+        let label = count == 1 ? "ingredient" : "ingredients"
+        withAnimation {
+            addBannerMessage = "Added \(count) \(label)"
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run {
+                withAnimation {
+                    addBannerMessage = nil
+                }
+            }
+        }
     }
 
     private var scanEntryContent: some View {
@@ -513,27 +565,60 @@ struct ReviewConfirmView: View {
     @Binding var entries: [DetectedPantryEntry]
     var onConfirm: () -> Void
 
+    @FocusState private var focusedMatchID: UUID?
+
     var body: some View {
         List {
             Section("Detected Items") {
                 ForEach($entries) { $entry in
-                    VStack(alignment: .leading, spacing: 8) {
-                        TextField("Detected text", text: $entry.rawText)
-                            .onSubmit { rematch(entryID: entry.id) }
-                        HStack {
-                            TextField("Ingredient", text: $entry.matchedIngredientName)
-                                .onSubmit { rematch(entryID: entry.id) }
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Toggle(isOn: $entry.isIncluded) {
+                                Text(entry.rawText)
+                                    .font(.subheadline)
+                            }
+                            .toggleStyle(.switch)
+
                             Spacer()
                             confidenceBadge(entry.confidence)
                         }
+
+                        HStack {
+                            TextField("Matched ingredient", text: $entry.matchedIngredientName)
+                                .focused($focusedMatchID, equals: entry.id)
+                                .textInputAutocapitalization(.words)
+                                .onSubmit { rematch(entryID: entry.id) }
+                            if entry.confidence == .needsReview {
+                                Button("Edit match") {
+                                    focusedMatchID = entry.id
+                                }
+                                .font(.caption)
+                            }
+                        }
+
+                        HStack {
+                            Text("Qty")
+                                .foregroundStyle(.secondary)
+                            TextField("1", text: $entry.quantity)
+                                .textFieldStyle(.roundedBorder)
+                                .keyboardType(.numbersAndPunctuation)
+                                .frame(maxWidth: 120)
+                            Spacer()
+                            if let matchedID = entry.matchedIngredientID {
+                                Text(matchedID)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
+                    .padding(.vertical, 4)
                 }
                 .onDelete { offsets in
                     entries.remove(atOffsets: offsets)
                 }
             }
         }
-        .navigationTitle("Review & Confirm")
+        .navigationTitle("Review & Add")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button("Re-match all") {
@@ -543,8 +628,8 @@ struct ReviewConfirmView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Confirm") { onConfirm() }
-                    .disabled(entries.isEmpty)
+                Button("Add") { onConfirm() }
+                    .disabled(entries.allSatisfy { !$0.isIncluded })
             }
         }
     }
