@@ -687,28 +687,22 @@ struct ScanCaptureScreen: View {
     @State private var photoCaptureTrigger = 0
     @StateObject private var analyzer = PhotoIngredientAnalyzer()
 
+    private var helperText: String {
+        switch mode {
+        case .barcode:
+            scannerVM.statusText ?? "Align barcode inside the frame"
+        case .photo:
+            "Take a photo of ingredients"
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 headerControls
-                HStack {
-                    Picker("Scan Mode", selection: $mode) {
-                        ForEach(ScanMode.allCases) { scanMode in
-                            Text(scanMode.rawValue).tag(scanMode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .tint(.orange)
-                }
-                .padding(6)
-                .background(.regularMaterial)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(.separator, lineWidth: 1)
-                }
+                ScanModeSelector(mode: $mode)
                 .padding(.horizontal)
                 .padding(.bottom, 10)
 
@@ -716,12 +710,10 @@ struct ScanCaptureScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                     .padding(.horizontal)
 
-                if let status = scannerVM.statusText {
-                    Text(status)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.8))
-                        .padding(.top, 8)
-                }
+                Text(helperText)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .padding(.top, 8)
 
                 if mode == .photo {
                     photoControls
@@ -778,6 +770,44 @@ struct ScanCaptureScreen: View {
                 .padding()
             }
             .presentationDetents([.fraction(0.3)])
+        }
+    }
+
+    private struct ScanModeSelector: View {
+        @Binding var mode: ScanMode
+
+        var body: some View {
+            HStack(spacing: 4) {
+                modeButton(.barcode)
+                modeButton(.photo)
+            }
+            .padding(6)
+            .background(.ultraThinMaterial)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(.white.opacity(0.2), lineWidth: 1)
+            }
+        }
+
+        @ViewBuilder
+        private func modeButton(_ value: ScanMode) -> some View {
+            Button {
+                mode = value
+            } label: {
+                Text(value.rawValue)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .foregroundStyle(mode == value ? .black : .white.opacity(0.85))
+                    .background {
+                        if mode == value {
+                            Capsule()
+                                .fill(.white)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
         }
     }
 
