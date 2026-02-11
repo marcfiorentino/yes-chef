@@ -3,17 +3,14 @@ import Foundation
 public enum PantryInputProcessor {
     public static func parseTranscriptPhrases(_ transcript: String) -> [String] {
         let normalized = transcript
-            .replacingOccurrences(of: "\n", with: ",")
-            .replacingOccurrences(of: " and ", with: ",", options: .caseInsensitive)
-            .replacingOccurrences(of: " & ", with: ",")
+            .replacingOccurrences(of: "\\band\\b|&|\\n", with: ",", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
         var seen: Set<String> = []
         var results: [String] = []
 
         for part in normalized.split(separator: ",") {
-            let cleaned = part
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            let cleaned = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleaned.isEmpty else { continue }
             let key = cleaned.lowercased()
             if seen.insert(key).inserted {

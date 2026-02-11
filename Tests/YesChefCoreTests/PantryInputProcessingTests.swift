@@ -10,6 +10,14 @@ final class PantryInputProcessingTests: XCTestCase {
         XCTAssertEqual(phrases, ["eggs", "milk", "garlic", "onion"])
     }
 
+    func testParseTranscriptPhrasesSplitsAmpersand() {
+        let transcript = "milk & eggs & basil"
+
+        let phrases = PantryInputProcessor.parseTranscriptPhrases(transcript)
+
+        XCTAssertEqual(phrases, ["milk", "eggs", "basil"])
+    }
+
     func testParseTranscriptPhrasesDedupesCaseInsensitively() {
         let transcript = "Eggs, eggs, EGGS and milk"
 
@@ -25,6 +33,8 @@ final class PantryInputProcessingTests: XCTestCase {
         XCTAssertEqual(entries[0].confidence, .high)
         XCTAssertEqual(entries[1].confidence, .high)
         XCTAssertEqual(entries[2].confidence, .high)
+        XCTAssertEqual(entries[0].quantity, "1")
+        XCTAssertTrue(entries[0].isIncluded)
     }
 
     func testDetectEntriesMarksUnknownPhraseForReview() {

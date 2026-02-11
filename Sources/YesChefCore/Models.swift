@@ -89,6 +89,8 @@ public struct DetectedPantryEntry: Identifiable, Hashable, Sendable {
     public var matchedIngredientName: String
     public var matchedIngredientID: String?
     public var confidence: IngredientMatchConfidence
+    public var quantity: String
+    public var isIncluded: Bool
     public var barcode: String?
 
     public init(
@@ -97,6 +99,8 @@ public struct DetectedPantryEntry: Identifiable, Hashable, Sendable {
         matchedIngredientName: String,
         matchedIngredientID: String? = nil,
         confidence: IngredientMatchConfidence,
+        quantity: String = "1",
+        isIncluded: Bool = true,
         barcode: String? = nil
     ) {
         self.id = id
@@ -104,6 +108,8 @@ public struct DetectedPantryEntry: Identifiable, Hashable, Sendable {
         self.matchedIngredientName = matchedIngredientName
         self.matchedIngredientID = matchedIngredientID
         self.confidence = confidence
+        self.quantity = quantity
+        self.isIncluded = isIncluded
         self.barcode = barcode
     }
 }
