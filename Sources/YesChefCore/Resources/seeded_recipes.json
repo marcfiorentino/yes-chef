@@ -1,0 +1,77 @@
+[
+  {
+    "id": "A6B5B97F-DA77-4A85-98B2-5165A6A39D91",
+    "name": "Garlic Butter Pasta",
+    "prepMinutes": 10,
+    "cookMinutes": 15,
+    "macroSummary": "Macros placeholder: 24g P / 58g C / 16g F",
+    "ingredients": [
+      { "ingredientName": "Pasta", "quantity": "8 oz" },
+      { "ingredientName": "Butter", "quantity": "2 tbsp" },
+      { "ingredientName": "Garlic", "quantity": "3 cloves" },
+      { "ingredientName": "Salt", "quantity": "1 tsp" },
+      { "ingredientName": "Black Pepper", "quantity": "1/2 tsp" }
+    ],
+    "instructions": [
+      "Cook pasta until al dente.",
+      "Melt butter and sauté garlic.",
+      "Toss with pasta, salt, and pepper."
+    ]
+  },
+  {
+    "id": "8BBD9A0A-B1C6-4EB4-80BA-D4E9F7C36FD2",
+    "name": "Lemon Chicken Rice Bowl",
+    "prepMinutes": 12,
+    "cookMinutes": 20,
+    "macroSummary": "Macros placeholder: 35g P / 45g C / 12g F",
+    "ingredients": [
+      { "ingredientName": "Chicken Breast", "quantity": "1 lb" },
+      { "ingredientName": "Rice", "quantity": "1 cup" },
+      { "ingredientName": "Lemon", "quantity": "1" },
+      { "ingredientName": "Olive Oil", "quantity": "1 tbsp" },
+      { "ingredientName": "Salt", "quantity": "1 tsp" }
+    ],
+    "instructions": [
+      "Cook rice according to package.",
+      "Season and sear chicken in olive oil.",
+      "Finish with lemon juice and serve over rice."
+    ]
+  },
+  {
+    "id": "7E73024B-E73D-44EA-95B9-2F6BA6B48014",
+    "name": "Bean & Cheddar Skillet",
+    "prepMinutes": 8,
+    "cookMinutes": 12,
+    "macroSummary": "Macros placeholder: 21g P / 30g C / 14g F",
+    "ingredients": [
+      { "ingredientName": "Black Beans", "quantity": "1 can" },
+      { "ingredientName": "Cheddar", "quantity": "1 cup" },
+      { "ingredientName": "Onion", "quantity": "1/2" },
+      { "ingredientName": "Tomato", "quantity": "1" },
+      { "ingredientName": "Olive Oil", "quantity": "1 tbsp" }
+    ],
+    "instructions": [
+      "Sauté onion in olive oil.",
+      "Add beans and tomato.",
+      "Top with cheddar and melt before serving."
+    ]
+  },
+  {
+    "id": "CFFBD8E8-E40A-4045-A8A8-BDCC7F5F4EFF",
+    "name": "Spinach Omelet",
+    "prepMinutes": 5,
+    "cookMinutes": 7,
+    "macroSummary": "Macros placeholder: 20g P / 4g C / 15g F",
+    "ingredients": [
+      { "ingredientName": "Egg", "quantity": "3" },
+      { "ingredientName": "Spinach", "quantity": "1 cup" },
+      { "ingredientName": "Butter", "quantity": "1 tsp" },
+      { "ingredientName": "Salt", "quantity": "1/4 tsp" }
+    ],
+    "instructions": [
+      "Whisk eggs with salt.",
+      "Wilt spinach in butter.",
+      "Pour eggs and fold when set."
+    ]
+  }
+]
