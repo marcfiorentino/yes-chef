@@ -693,14 +693,22 @@ struct ScanCaptureScreen: View {
 
             VStack(spacing: 0) {
                 headerControls
-                Picker("Scan Mode", selection: $mode) {
-                    ForEach(ScanMode.allCases) { scanMode in
-                        Text(scanMode.rawValue).tag(scanMode)
+                HStack {
+                    Picker("Scan Mode", selection: $mode) {
+                        ForEach(ScanMode.allCases) { scanMode in
+                            Text(scanMode.rawValue).tag(scanMode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .tint(.orange)
                 }
-                .pickerStyle(.segmented)
-                .tint(.orange)
-                .foregroundStyle(.primary)
+                .padding(6)
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(.separator, lineWidth: 1)
+                }
                 .padding(.horizontal)
                 .padding(.bottom, 10)
 
