@@ -549,7 +549,6 @@ struct ReviewConfirmView: View {
         }
     }
 
-    @ViewBuilder
     private func confidenceBadge(_ confidence: IngredientMatchConfidence) -> some View {
         let label: String
         let color: Color
@@ -565,7 +564,7 @@ struct ReviewConfirmView: View {
             color = .red
         }
 
-        Text(label)
+        return Text(label)
             .font(.caption2.bold())
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -971,7 +970,7 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
         stopRecording()
 
         do {
-            try audioSession.setCategory(.record, mode: .measurement, options: [.allowBluetooth, .duckOthers])
+            try audioSession.setCategory(.record, mode: .measurement, options: [.allowBluetoothHFP, .duckOthers])
             try audioSession.setActive(true)
         } catch {
             errorMessage = "Unable to access microphone session."
