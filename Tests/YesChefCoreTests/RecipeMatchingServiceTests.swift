@@ -64,6 +64,7 @@ final class RecipeMatchingServiceTests: XCTestCase {
         XCTAssertEqual(suggestions.first?.ingredient.name, "Olive Oil")
         XCTAssertEqual(suggestions.first?.unlockCount, 2)
         XCTAssertEqual(suggestions.count, 3)
+        XCTAssertFalse(suggestions[0].recipeNames.isEmpty)
     }
 
     func testDietFilteringKeepsOnlyEnabledTags() {
@@ -73,6 +74,44 @@ final class RecipeMatchingServiceTests: XCTestCase {
         let matches = matcher.match(recipes: recipes, pantryItems: [], userPrefs: prefs)
 
         XCTAssertEqual(matches.map(\.recipe.name), ["Spinach Omelet"])
+    }
+
+    func testAllergenFilteringRemovesUnsafeRecipes() {
+        let recipes = makeRecipes()
+        let prefs = UserPrefs(allergens: [.dairy])
+
+        let matches = matcher.match(recipes: recipes, pantryItems: [], userPrefs: prefs)
+
+        XCTAssertFalse(matches.map(\.recipe.name).contains("Garlic Butter Pasta"))
+        XCTAssertFalse(matches.map(\.recipe.name).contains("Bean & Cheddar Skillet"))
+    }
+
+    func testRankingPrefersHigherPantryMatchThenTimeThenProteinDistance() {
+        let recipes = makeRecipes()
+        let pantry = [
+            PantryItem(ingredientName: "egg", quantity: "3"),
+            PantryItem(ingredientName: "spinach", quantity: "1 cup"),
+            PantryItem(ingredientName: "salt", quantity: "1 tsp"),
+            PantryItem(ingredientName: "butter", quantity: "1 tsp"),
+            PantryItem(ingredientName: "olive oil", quantity: "1 tbsp")
+        ]
+
+        let prefs = UserPrefs(targetProtein: 22)
+        let matches = matcher.match(recipes: recipes, pantryItems: pantry, userPrefs: prefs)
+
+        XCTAssertEqual(matches.first?.recipe.name, "Spinach Omelet")
+        XCTAssertGreaterThan(matches.first?.pantryMatchPercentage ?? 0, matches.last?.pantryMatchPercentage ?? 0)
+    }
+
+    func testServingsScalingMultipliesNutrition() {
+        let base = NutritionSummary(calories: 300, protein: 20, carbs: 30, fat: 10)
+
+        let scaled = base.scaled(forServings: 3)
+
+        XCTAssertEqual(scaled.calories, 900)
+        XCTAssertEqual(scaled.protein, 60)
+        XCTAssertEqual(scaled.carbs, 90)
+        XCTAssertEqual(scaled.fat, 30)
     }
 
     private func makeRecipes() -> [Recipe] {
@@ -130,7 +169,7 @@ final class RecipeMatchingServiceTests: XCTestCase {
                 prepMinutes: 12,
                 cookMinutes: 20,
                 nutrition: NutritionSummary(calories: 510, protein: 35, carbs: 45, fat: 12),
-                dietTags: [.highProtein],
+                dietTags: [.highProtein, .mediterranean],
                 ingredients: [
                     RecipeIngredient(ingredientName: "Chicken Breast", quantity: "1 lb"),
                     RecipeIngredient(ingredientName: "Rice", quantity: "1 cup"),

@@ -25,7 +25,7 @@
     "prepMinutes": 12,
     "cookMinutes": 20,
     "nutrition": { "calories": 510, "protein": 35, "carbs": 45, "fat": 12 },
-    "dietTags": ["High Protein"],
+    "dietTags": ["High Protein", "Mediterranean"],
     "ingredients": [
       { "ingredientName": "Chicken Breast", "quantity": "1 lb" },
       { "ingredientName": "Rice", "quantity": "1 cup" },
