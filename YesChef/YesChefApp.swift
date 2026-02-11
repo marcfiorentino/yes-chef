@@ -940,6 +940,7 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
 
     private let recognizer = SFSpeechRecognizer()
     private let audioEngine = AVAudioEngine()
+    private let audioSession = AVAudioSession.sharedInstance()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
 
@@ -967,12 +968,33 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
     }
 
     private func beginSession() {
+        stopRecording()
+
+        do {
+            try audioSession.setCategory(.record, mode: .measurement, options: [.allowBluetooth, .duckOthers])
+            try audioSession.setActive(true)
+        } catch {
+            errorMessage = "Unable to access microphone session."
+            return
+        }
+
         let request = SFSpeechAudioBufferRecognitionRequest()
         self.request = request
         request.shouldReportPartialResults = true
 
         let input = audioEngine.inputNode
-        let format = input.outputFormat(forBus: 0)
+        let detectedFormat = input.inputFormat(forBus: 0)
+        let format: AVAudioFormat
+        if detectedFormat.sampleRate > 0, detectedFormat.channelCount > 0 {
+            format = detectedFormat
+        } else if let fallbackFormat = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1) {
+            format = fallbackFormat
+        } else {
+            errorMessage = "Microphone not available in simulator."
+            deactivateAudioSession()
+            return
+        }
+
         input.removeTap(onBus: 0)
         input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
             self?.request?.append(buffer)
@@ -984,6 +1006,7 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
             isRecording = true
         } catch {
             errorMessage = "Unable to start audio engine."
+            stopRecording()
             return
         }
 
@@ -999,12 +1022,24 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
     }
 
     func stopRecording() {
-        guard isRecording else { return }
-        audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.stop()
+        audioEngine.reset()
+
         request?.endAudio()
         task?.cancel()
+        request = nil
+        task = nil
         isRecording = false
+        deactivateAudioSession()
+    }
+
+    private func deactivateAudioSession() {
+        do {
+            try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+        } catch {
+            // Keep UI responsive even if session teardown fails.
+        }
     }
 }
 
