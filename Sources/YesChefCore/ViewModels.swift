@@ -32,11 +32,37 @@ public final class PantryViewModel {
         }
 
         let canonicalName = IngredientCatalog.canonicalName(for: pendingIngredientName)
-        let item = PantryItem(ingredientName: canonicalName, quantity: quantity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "—" : quantity)
+        let item = PantryItem(
+            ingredientName: canonicalName,
+            quantity: quantity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "—" : quantity,
+            source: .typed,
+            rawInput: pendingIngredientName,
+            canonicalIngredientID: IngredientCatalog.canonicalIdentifier(for: canonicalName),
+            canonicalIngredientName: canonicalName
+        )
         pantryItems.insert(item, at: 0)
         self.pendingIngredientName = nil
         suggestions = []
         return item
+    }
+
+
+
+    @discardableResult
+    public func addDetectedEntries(_ entries: [DetectedPantryEntry], source: PantryEntrySource, rawInput: String? = nil) -> [PantryItem] {
+        let added = entries.map { entry in
+            PantryItem(
+                ingredientName: entry.matchedIngredientName,
+                quantity: "—",
+                source: source,
+                rawInput: rawInput ?? entry.rawText,
+                canonicalIngredientID: entry.matchedIngredientID,
+                canonicalIngredientName: entry.matchedIngredientName,
+                barcode: entry.barcode
+            )
+        }
+        pantryItems.insert(contentsOf: added.reversed(), at: 0)
+        return added
     }
 
     public func removeItems(at offsets: IndexSet) {

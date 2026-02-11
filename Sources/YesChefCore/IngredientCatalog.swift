@@ -21,13 +21,43 @@ public struct IngredientCatalog {
     ]
 
     public static func canonicalName(for value: String) -> String {
-        let lowered = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        for ingredient in seeded {
-            if ingredient.name.lowercased() == lowered || ingredient.synonyms.contains(where: { $0.lowercased() == lowered }) {
-                return ingredient.name
-            }
+        if let match = matchIngredient(for: value) {
+            return match.ingredient.name
         }
         return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func canonicalIdentifier(for ingredientName: String) -> String {
+        ingredientName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    public static func matchIngredient(for phrase: String) -> IngredientMatch? {
+        let lowered = phrase.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lowered.isEmpty else { return nil }
+
+        var best: IngredientMatch?
+        for ingredient in seeded {
+            let names = [ingredient.name] + ingredient.synonyms
+            for name in names {
+                let score = similarityScore(lhs: lowered, rhs: name.lowercased())
+                if best == nil || score > best!.score {
+                    best = IngredientMatch(ingredient: ingredient, score: score)
+                }
+            }
+        }
+
+        guard let best else { return nil }
+        if best.score >= 0.9 {
+            return IngredientMatch(ingredient: best.ingredient, score: best.score, confidence: .high)
+        }
+        if best.score >= 0.72 {
+            return IngredientMatch(ingredient: best.ingredient, score: best.score, confidence: .medium)
+        }
+        return nil
     }
 
     public static func autocompleteSuggestions(for query: String) -> [Ingredient] {
@@ -38,4 +68,57 @@ public struct IngredientCatalog {
             $0.name.lowercased().contains(lowered) || $0.synonyms.contains(where: { $0.lowercased().contains(lowered) })
         }
     }
+}
+
+public struct IngredientMatch: Hashable, Sendable {
+    public let ingredient: Ingredient
+    public let score: Double
+    public let confidence: IngredientMatchConfidence
+
+    public init(ingredient: Ingredient, score: Double, confidence: IngredientMatchConfidence = .needsReview) {
+        self.ingredient = ingredient
+        self.score = score
+        self.confidence = confidence
+    }
+}
+
+private func similarityScore(lhs: String, rhs: String) -> Double {
+    if lhs == rhs { return 1 }
+    if lhs.contains(rhs) || rhs.contains(lhs) { return 0.88 }
+
+    let lhsTokens = Set(lhs.split(separator: " ").map(String.init))
+    let rhsTokens = Set(rhs.split(separator: " ").map(String.init))
+    let overlap = Double(lhsTokens.intersection(rhsTokens).count)
+    let union = Double(max(1, lhsTokens.union(rhsTokens).count))
+    let jaccard = overlap / union
+
+    let edit = normalizedEditSimilarity(lhs: lhs, rhs: rhs)
+    return max(jaccard, edit)
+}
+
+private func normalizedEditSimilarity(lhs: String, rhs: String) -> Double {
+    let distance = levenshtein(Array(lhs), Array(rhs))
+    let maxLength = max(lhs.count, rhs.count)
+    guard maxLength > 0 else { return 1 }
+    return 1 - (Double(distance) / Double(maxLength))
+}
+
+private func levenshtein(_ lhs: [Character], _ rhs: [Character]) -> Int {
+    if lhs.isEmpty { return rhs.count }
+    if rhs.isEmpty { return lhs.count }
+
+    var previous = Array(0...rhs.count)
+    for (i, lhsChar) in lhs.enumerated() {
+        var current = [i + 1]
+        for (j, rhsChar) in rhs.enumerated() {
+            let cost = lhsChar == rhsChar ? 0 : 1
+            current.append(min(
+                current[j] + 1,
+                previous[j + 1] + 1,
+                previous[j] + cost
+            ))
+        }
+        previous = current
+    }
+    return previous[rhs.count]
 }

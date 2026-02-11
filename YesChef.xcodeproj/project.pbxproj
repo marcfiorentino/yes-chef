@@ -215,6 +215,9 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YesChef uses the microphone to capture spoken ingredients.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YesChef uses speech recognition to transcribe your pantry ingredients.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "YesChef uses the camera to scan product barcodes.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -241,6 +244,9 @@
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "YesChef uses the microphone to capture spoken ingredients.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "YesChef uses speech recognition to transcribe your pantry ingredients.";
+				INFOPLIST_KEY_NSCameraUsageDescription = "YesChef uses the camera to scan product barcodes.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

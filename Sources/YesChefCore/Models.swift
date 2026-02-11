@@ -17,12 +17,94 @@ public struct PantryItem: Identifiable, Codable, Hashable, Sendable {
     public let ingredientName: String
     public let quantity: String
     public let dateAdded: Date
+    public let source: PantryEntrySource
+    public let rawInput: String?
+    public let canonicalIngredientID: String?
+    public let canonicalIngredientName: String?
+    public let barcode: String?
 
-    public init(id: UUID = UUID(), ingredientName: String, quantity: String, dateAdded: Date = Date()) {
+    public init(
+        id: UUID = UUID(),
+        ingredientName: String,
+        quantity: String,
+        dateAdded: Date = Date(),
+        source: PantryEntrySource = .typed,
+        rawInput: String? = nil,
+        canonicalIngredientID: String? = nil,
+        canonicalIngredientName: String? = nil,
+        barcode: String? = nil
+    ) {
         self.id = id
         self.ingredientName = ingredientName
         self.quantity = quantity
         self.dateAdded = dateAdded
+        self.source = source
+        self.rawInput = rawInput
+        self.canonicalIngredientID = canonicalIngredientID
+        self.canonicalIngredientName = canonicalIngredientName
+        self.barcode = barcode
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case ingredientName
+        case quantity
+        case dateAdded
+        case source
+        case rawInput
+        case canonicalIngredientID
+        case canonicalIngredientName
+        case barcode
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        ingredientName = try container.decode(String.self, forKey: .ingredientName)
+        quantity = try container.decodeIfPresent(String.self, forKey: .quantity) ?? "—"
+        dateAdded = try container.decodeIfPresent(Date.self, forKey: .dateAdded) ?? Date()
+        source = try container.decodeIfPresent(PantryEntrySource.self, forKey: .source) ?? .typed
+        rawInput = try container.decodeIfPresent(String.self, forKey: .rawInput)
+        canonicalIngredientID = try container.decodeIfPresent(String.self, forKey: .canonicalIngredientID)
+        canonicalIngredientName = try container.decodeIfPresent(String.self, forKey: .canonicalIngredientName)
+        barcode = try container.decodeIfPresent(String.self, forKey: .barcode)
+    }
+}
+
+public enum PantryEntrySource: String, Codable, Hashable, Sendable {
+    case typed
+    case spoken
+    case scanned
+}
+
+public enum IngredientMatchConfidence: String, Codable, Hashable, Sendable {
+    case high
+    case medium
+    case needsReview
+}
+
+public struct DetectedPantryEntry: Identifiable, Hashable, Sendable {
+    public let id: UUID
+    public var rawText: String
+    public var matchedIngredientName: String
+    public var matchedIngredientID: String?
+    public var confidence: IngredientMatchConfidence
+    public var barcode: String?
+
+    public init(
+        id: UUID = UUID(),
+        rawText: String,
+        matchedIngredientName: String,
+        matchedIngredientID: String? = nil,
+        confidence: IngredientMatchConfidence,
+        barcode: String? = nil
+    ) {
+        self.id = id
+        self.rawText = rawText
+        self.matchedIngredientName = matchedIngredientName
+        self.matchedIngredientID = matchedIngredientID
+        self.confidence = confidence
+        self.barcode = barcode
     }
 }
 
