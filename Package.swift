@@ -7,8 +7,7 @@ let package = Package(
         .iOS(.v17)
     ],
     products: [
-        .library(name: "YesChefCore", targets: ["YesChefCore"]),
-        .library(name: "YesChefApp", targets: ["YesChefApp"])
+        .library(name: "YesChefCore", targets: ["YesChefCore"])
     ],
     targets: [
         .target(
@@ -16,10 +15,6 @@ let package = Package(
             resources: [
                 .process("Resources")
             ]
-        ),
-        .target(
-            name: "YesChefApp",
-            dependencies: ["YesChefCore"]
         ),
         .testTarget(
             name: "YesChefCoreTests",
