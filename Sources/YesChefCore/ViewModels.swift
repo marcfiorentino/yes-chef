@@ -9,9 +9,15 @@ public final class PantryViewModel {
         self.pantryItems = pantryItems
     }
 
+    public func replaceItems(_ items: [PantryItem]) {
+        pantryItems = items
+    }
+
     public func updateEntryText(_ text: String) {
         pendingIngredientName = text
         suggestions = IngredientCatalog.autocompleteSuggestions(for: text)
+            .prefix(5)
+            .map { $0 }
     }
 
     public func chooseSuggestion(_ ingredient: Ingredient) {
@@ -26,11 +32,17 @@ public final class PantryViewModel {
         }
 
         let canonicalName = IngredientCatalog.canonicalName(for: pendingIngredientName)
-        let item = PantryItem(ingredientName: canonicalName, quantity: quantity)
+        let item = PantryItem(ingredientName: canonicalName, quantity: quantity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "—" : quantity)
         pantryItems.insert(item, at: 0)
         self.pendingIngredientName = nil
         suggestions = []
         return item
+    }
+
+    public func removeItems(at offsets: IndexSet) {
+        for offset in offsets.sorted(by: >) {
+            pantryItems.remove(at: offset)
+        }
     }
 }
 
@@ -41,12 +53,28 @@ public final class ShopViewModel {
         self.shoppingList = shoppingList
     }
 
+    public func replaceItems(_ items: [RecipeIngredient]) {
+        self.shoppingList = deduped(items)
+    }
+
     public func addMissing(_ ingredients: [RecipeIngredient]) {
-        for ingredient in ingredients {
-            if !shoppingList.contains(where: { IngredientCatalog.canonicalName(for: $0.ingredientName).lowercased() == IngredientCatalog.canonicalName(for: ingredient.ingredientName).lowercased() }) {
-                shoppingList.append(ingredient)
+        shoppingList = deduped(shoppingList + ingredients)
+    }
+
+    public func addIngredient(name: String) {
+        addMissing([RecipeIngredient(ingredientName: name, quantity: "1")])
+    }
+
+    private func deduped(_ items: [RecipeIngredient]) -> [RecipeIngredient] {
+        var seen: Set<String> = []
+        var result: [RecipeIngredient] = []
+        for ingredient in items {
+            let canonical = IngredientCatalog.canonicalName(for: ingredient.ingredientName).lowercased()
+            if seen.insert(canonical).inserted {
+                result.append(RecipeIngredient(ingredientName: IngredientCatalog.canonicalName(for: ingredient.ingredientName), quantity: ingredient.quantity))
             }
         }
+        return result
     }
 }
 
@@ -75,8 +103,12 @@ public final class RecipesViewModel {
         self.recipes = recipes
     }
 
-    public func updateMatches(pantryItems: [PantryItem]) {
-        state.cookNow = matcher.cookNow(recipes: recipes, pantryItems: pantryItems)
-        state.almostThere = matcher.almostThere(recipes: recipes, pantryItems: pantryItems)
+    public func updateMatches(pantryItems: [PantryItem], prefs: UserPrefs = UserPrefs()) {
+        state.cookNow = matcher.cookNow(recipes: recipes, pantryItems: pantryItems, userPrefs: prefs)
+        state.almostThere = matcher.almostThere(recipes: recipes, pantryItems: pantryItems, userPrefs: prefs).filter { !$0.isCookNow }
+    }
+
+    public func unlockSuggestions(pantryItems: [PantryItem], prefs: UserPrefs = UserPrefs()) -> [UnlockSuggestion] {
+        matcher.topUnlockSuggestions(recipes: recipes, pantryItems: pantryItems, userPrefs: prefs)
     }
 }

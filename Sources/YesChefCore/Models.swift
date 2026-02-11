@@ -41,7 +41,8 @@ public struct Recipe: Identifiable, Codable, Hashable, Sendable {
     public let name: String
     public let prepMinutes: Int
     public let cookMinutes: Int
-    public let macroSummary: String
+    public let nutrition: NutritionSummary
+    public let dietTags: [DietTag]
     public let ingredients: [RecipeIngredient]
     public let instructions: [String]
 
@@ -52,7 +53,8 @@ public struct Recipe: Identifiable, Codable, Hashable, Sendable {
         name: String,
         prepMinutes: Int,
         cookMinutes: Int,
-        macroSummary: String,
+        nutrition: NutritionSummary,
+        dietTags: [DietTag] = [],
         ingredients: [RecipeIngredient],
         instructions: [String]
     ) {
@@ -60,21 +62,66 @@ public struct Recipe: Identifiable, Codable, Hashable, Sendable {
         self.name = name
         self.prepMinutes = prepMinutes
         self.cookMinutes = cookMinutes
-        self.macroSummary = macroSummary
+        self.nutrition = nutrition
+        self.dietTags = dietTags
         self.ingredients = ingredients
         self.instructions = instructions
     }
 }
 
+public struct NutritionSummary: Codable, Hashable, Sendable {
+    public let calories: Int
+    public let protein: Int
+    public let carbs: Int
+    public let fat: Int
+
+    public init(calories: Int, protein: Int, carbs: Int, fat: Int) {
+        self.calories = calories
+        self.protein = protein
+        self.carbs = carbs
+        self.fat = fat
+    }
+
+    public var totalMacroGrams: Int { max(1, protein + carbs + fat) }
+}
+
+public enum DietTag: String, Codable, Hashable, CaseIterable, Sendable {
+    case highProtein = "High Protein"
+    case keto = "Keto"
+    case vegetarian = "Vegetarian"
+}
+
 public struct UserPrefs: Codable, Hashable, Sendable {
     public var displayName: String
-    public var dietaryStyle: String
-    public var showMacroPlaceholders: Bool
+    public var enabledDiets: Set<DietTag>
+    public var targetProtein: Int?
+    public var targetCarbs: Int?
+    public var targetFat: Int?
 
-    public init(displayName: String = "Chef", dietaryStyle: String = "Balanced", showMacroPlaceholders: Bool = true) {
+    public init(
+        displayName: String = "Chef",
+        enabledDiets: Set<DietTag> = [],
+        targetProtein: Int? = nil,
+        targetCarbs: Int? = nil,
+        targetFat: Int? = nil
+    ) {
         self.displayName = displayName
-        self.dietaryStyle = dietaryStyle
-        self.showMacroPlaceholders = showMacroPlaceholders
+        self.enabledDiets = enabledDiets
+        self.targetProtein = targetProtein
+        self.targetCarbs = targetCarbs
+        self.targetFat = targetFat
+    }
+}
+
+public struct UnlockSuggestion: Identifiable, Hashable, Sendable {
+    public let ingredient: Ingredient
+    public let unlockCount: Int
+
+    public var id: UUID { ingredient.id }
+
+    public init(ingredient: Ingredient, unlockCount: Int) {
+        self.ingredient = ingredient
+        self.unlockCount = unlockCount
     }
 }
 

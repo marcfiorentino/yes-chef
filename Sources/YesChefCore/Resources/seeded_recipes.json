@@ -4,7 +4,8 @@
     "name": "Garlic Butter Pasta",
     "prepMinutes": 10,
     "cookMinutes": 15,
-    "macroSummary": "Macros placeholder: 24g P / 58g C / 16g F",
+    "nutrition": { "calories": 470, "protein": 24, "carbs": 58, "fat": 16 },
+    "dietTags": ["Vegetarian"],
     "ingredients": [
       { "ingredientName": "Pasta", "quantity": "8 oz" },
       { "ingredientName": "Butter", "quantity": "2 tbsp" },
@@ -23,7 +24,8 @@
     "name": "Lemon Chicken Rice Bowl",
     "prepMinutes": 12,
     "cookMinutes": 20,
-    "macroSummary": "Macros placeholder: 35g P / 45g C / 12g F",
+    "nutrition": { "calories": 510, "protein": 35, "carbs": 45, "fat": 12 },
+    "dietTags": ["High Protein"],
     "ingredients": [
       { "ingredientName": "Chicken Breast", "quantity": "1 lb" },
       { "ingredientName": "Rice", "quantity": "1 cup" },
@@ -42,7 +44,8 @@
     "name": "Bean & Cheddar Skillet",
     "prepMinutes": 8,
     "cookMinutes": 12,
-    "macroSummary": "Macros placeholder: 21g P / 30g C / 14g F",
+    "nutrition": { "calories": 420, "protein": 21, "carbs": 30, "fat": 14 },
+    "dietTags": ["Vegetarian"],
     "ingredients": [
       { "ingredientName": "Black Beans", "quantity": "1 can" },
       { "ingredientName": "Cheddar", "quantity": "1 cup" },
@@ -61,7 +64,8 @@
     "name": "Spinach Omelet",
     "prepMinutes": 5,
     "cookMinutes": 7,
-    "macroSummary": "Macros placeholder: 20g P / 4g C / 15g F",
+    "nutrition": { "calories": 290, "protein": 20, "carbs": 4, "fat": 15 },
+    "dietTags": ["Keto", "Vegetarian", "High Protein"],
     "ingredients": [
       { "ingredientName": "Egg", "quantity": "3" },
       { "ingredientName": "Spinach", "quantity": "1 cup" },

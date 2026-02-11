@@ -52,6 +52,29 @@ final class RecipeMatchingServiceTests: XCTestCase {
         XCTAssertEqual(pasta.missingCount, 0)
     }
 
+    func testUnlockSuggestionsRankByUnlockCount() {
+        let recipes = makeRecipes()
+        let pantry = [
+            PantryItem(ingredientName: "butter", quantity: "1"),
+            PantryItem(ingredientName: "salt", quantity: "1")
+        ]
+
+        let suggestions = matcher.topUnlockSuggestions(recipes: recipes, pantryItems: pantry, limit: 3)
+
+        XCTAssertEqual(suggestions.first?.ingredient.name, "Olive Oil")
+        XCTAssertEqual(suggestions.first?.unlockCount, 2)
+        XCTAssertEqual(suggestions.count, 3)
+    }
+
+    func testDietFilteringKeepsOnlyEnabledTags() {
+        let recipes = makeRecipes()
+        let prefs = UserPrefs(enabledDiets: [.keto])
+
+        let matches = matcher.match(recipes: recipes, pantryItems: [], userPrefs: prefs)
+
+        XCTAssertEqual(matches.map(\.recipe.name), ["Spinach Omelet"])
+    }
+
     private func makeRecipes() -> [Recipe] {
         [
             Recipe(
@@ -59,7 +82,8 @@ final class RecipeMatchingServiceTests: XCTestCase {
                 name: "Spinach Omelet",
                 prepMinutes: 5,
                 cookMinutes: 7,
-                macroSummary: "Placeholder",
+                nutrition: NutritionSummary(calories: 290, protein: 20, carbs: 4, fat: 15),
+                dietTags: [.keto, .vegetarian, .highProtein],
                 ingredients: [
                     RecipeIngredient(ingredientName: "Egg", quantity: "3"),
                     RecipeIngredient(ingredientName: "Spinach", quantity: "1 cup"),
@@ -73,7 +97,8 @@ final class RecipeMatchingServiceTests: XCTestCase {
                 name: "Bean & Cheddar Skillet",
                 prepMinutes: 8,
                 cookMinutes: 12,
-                macroSummary: "Placeholder",
+                nutrition: NutritionSummary(calories: 420, protein: 21, carbs: 30, fat: 14),
+                dietTags: [.vegetarian],
                 ingredients: [
                     RecipeIngredient(ingredientName: "Black Beans", quantity: "1 can"),
                     RecipeIngredient(ingredientName: "Cheddar", quantity: "1 cup"),
@@ -88,13 +113,30 @@ final class RecipeMatchingServiceTests: XCTestCase {
                 name: "Garlic Butter Pasta",
                 prepMinutes: 10,
                 cookMinutes: 15,
-                macroSummary: "Placeholder",
+                nutrition: NutritionSummary(calories: 470, protein: 24, carbs: 58, fat: 16),
+                dietTags: [.vegetarian],
                 ingredients: [
                     RecipeIngredient(ingredientName: "Pasta", quantity: "8 oz"),
                     RecipeIngredient(ingredientName: "Butter", quantity: "2 tbsp"),
                     RecipeIngredient(ingredientName: "Garlic", quantity: "3 cloves"),
                     RecipeIngredient(ingredientName: "Salt", quantity: "1 tsp"),
                     RecipeIngredient(ingredientName: "Black Pepper", quantity: "1/2 tsp")
+                ],
+                instructions: []
+            ),
+            Recipe(
+                id: UUID(uuidString: "8BBD9A0A-B1C6-4EB4-80BA-D4E9F7C36FD2")!,
+                name: "Lemon Chicken Rice Bowl",
+                prepMinutes: 12,
+                cookMinutes: 20,
+                nutrition: NutritionSummary(calories: 510, protein: 35, carbs: 45, fat: 12),
+                dietTags: [.highProtein],
+                ingredients: [
+                    RecipeIngredient(ingredientName: "Chicken Breast", quantity: "1 lb"),
+                    RecipeIngredient(ingredientName: "Rice", quantity: "1 cup"),
+                    RecipeIngredient(ingredientName: "Lemon", quantity: "1"),
+                    RecipeIngredient(ingredientName: "Olive Oil", quantity: "1 tbsp"),
+                    RecipeIngredient(ingredientName: "Salt", quantity: "1 tsp")
                 ],
                 instructions: []
             )
