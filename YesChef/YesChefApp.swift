@@ -307,6 +307,9 @@ struct PantryTabView: View {
     @State private var speakErrorHint: String?
     @State private var addBannerMessage: String?
     @State private var scanPresented = false
+    @State private var liveAddedIngredientNames: [String] = []
+    @State private var liveNeedsReviewEntries: [DetectedPantryEntry] = []
+    @State private var processedSpeechTokenKeys: Set<String> = []
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
@@ -493,7 +496,14 @@ struct PantryTabView: View {
     private var speakEntryContent: some View {
         VStack(spacing: 12) {
             Button {
-                speechVM.toggleRecording()
+                if speechVM.isRecording {
+                    speechVM.stopRecording()
+                    processSpokenTranscript(includeTrailingToken: true)
+                    presentNeedsReviewIfNeeded()
+                } else {
+                    resetLiveSpeechSessionState()
+                    speechVM.startRecording()
+                }
             } label: {
                 Image(systemName: speechVM.isRecording ? "stop.circle.fill" : "mic.circle.fill")
                     .font(.system(size: 64))
@@ -511,13 +521,47 @@ struct PantryTabView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
+            if !liveAddedIngredientNames.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Added")
+                        .font(.subheadline.weight(.semibold))
+                    Text(liveAddedIngredientNames.map { "\($0) ✓" }.joined(separator: ", "))
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if !liveNeedsReviewEntries.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Needs review")
+                        .font(.subheadline.weight(.semibold))
+                    ForEach(liveNeedsReviewEntries) { entry in
+                        HStack {
+                            Text(entry.rawText)
+                            Spacer()
+                            Button("Add") {
+                                addReviewedEntry(entry)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                        .font(.subheadline)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             if let error = speechVM.errorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
             }
 
-            if !speechVM.isRecording, !speechVM.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !speechVM.isRecording,
+               !speechVM.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               liveNeedsReviewEntries.isEmpty,
+               liveAddedIngredientNames.isEmpty {
                 Button("Review & Add to Pantry") {
                     let detected = PantryInputProcessor.detectEntries(from: speechVM.transcript)
                     guard !detected.isEmpty else {
@@ -540,6 +584,56 @@ struct PantryTabView: View {
             }
         }
         .padding(.vertical, 6)
+        .onChange(of: speechVM.transcript) { _, _ in
+            guard speechVM.isRecording else { return }
+            processSpokenTranscript(includeTrailingToken: false)
+        }
+    }
+
+    private func resetLiveSpeechSessionState() {
+        liveAddedIngredientNames = []
+        liveNeedsReviewEntries = []
+        processedSpeechTokenKeys = []
+        speakErrorHint = nil
+    }
+
+    private func processSpokenTranscript(includeTrailingToken: Bool) {
+        let tokens = PantryInputProcessor.parseTranscriptTokens(speechVM.transcript, includeTrailingToken: includeTrailingToken)
+
+        for token in tokens {
+            let tokenKey = token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !tokenKey.isEmpty, processedSpeechTokenKeys.insert(tokenKey).inserted else { continue }
+
+            let detected = PantryInputProcessor.detectEntry(from: token)
+            guard detected.confidence != .needsReview else {
+                liveNeedsReviewEntries.append(detected)
+                continue
+            }
+
+            let added = appModel.addDetectedPantryEntries([detected], source: .spoken, rawInput: speechVM.transcript)
+            guard let addedItem = added.first else { continue }
+            if !liveAddedIngredientNames.contains(addedItem.ingredientName) {
+                liveAddedIngredientNames.append(addedItem.ingredientName)
+            }
+        }
+    }
+
+    private func addReviewedEntry(_ entry: DetectedPantryEntry) {
+        let normalized = entry.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        let added = appModel.addDetectedPantryEntries([entry], source: .spoken, rawInput: speechVM.transcript)
+        if let firstAdded = added.first, !liveAddedIngredientNames.contains(firstAdded.ingredientName) {
+            liveAddedIngredientNames.append(firstAdded.ingredientName)
+        }
+        liveNeedsReviewEntries.removeAll { $0.id == entry.id }
+    }
+
+    private func presentNeedsReviewIfNeeded() {
+        guard !liveNeedsReviewEntries.isEmpty else { return }
+        reviewEntries = liveNeedsReviewEntries
+        reviewSource = .spoken
+        reviewRawInput = speechVM.transcript
+        reviewSheetPresented = true
     }
 
     private func showAddBanner(count: Int) {
@@ -605,6 +699,8 @@ struct ScanCaptureScreen: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .tint(.orange)
+                .foregroundStyle(.primary)
                 .padding(.horizontal)
                 .padding(.bottom, 10)
 
@@ -1322,8 +1418,11 @@ final class SpeechCaptureViewModel: NSObject, ObservableObject {
             if let result {
                 Task { @MainActor in self.transcript = result.bestTranscription.formattedString }
             }
-            if error != nil || result?.isFinal == true {
-                Task { @MainActor in self.stopRecording() }
+            if error != nil {
+                Task { @MainActor in
+                    self.errorMessage = "Speech recognition interrupted."
+                    self.stopRecording()
+                }
             }
         }
     }

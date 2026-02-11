@@ -2,16 +2,27 @@ import Foundation
 
 public enum PantryInputProcessor {
     public static func parseTranscriptPhrases(_ transcript: String) -> [String] {
+        parseTranscriptTokens(transcript, includeTrailingToken: true)
+    }
+
+    public static func parseTranscriptTokens(_ transcript: String, includeTrailingToken: Bool = true) -> [String] {
         let normalized = transcript
-            .replacingOccurrences(of: "\\band\\b|&|\\n", with: ",", options: .regularExpression)
+            .replacingOccurrences(of: "\\band\\b|&", with: ",", options: .regularExpression)
+            .replacingOccurrences(of: "\\n", with: ",")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: " ", with: ",")
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
         var seen: Set<String> = []
         var results: [String] = []
 
-        for part in normalized.split(separator: ",") {
+        let endedWithSeparator = transcript.range(of: #"[\s,\n]$"#, options: .regularExpression) != nil
+        let parts = normalized.split(separator: ",", omittingEmptySubsequences: true)
+        let upperBound = includeTrailingToken || endedWithSeparator ? parts.count : max(0, parts.count - 1)
+
+        for part in parts.prefix(upperBound) {
             let cleaned = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !cleaned.isEmpty else { continue }
+            guard cleaned.count >= 2 else { continue }
             let key = cleaned.lowercased()
             if seen.insert(key).inserted {
                 results.append(cleaned)
@@ -23,22 +34,26 @@ public enum PantryInputProcessor {
 
     public static func detectEntries(from transcript: String) -> [DetectedPantryEntry] {
         parseTranscriptPhrases(transcript).map { phrase in
-            if let match = IngredientCatalog.matchIngredient(for: phrase) {
-                return DetectedPantryEntry(
-                    rawText: phrase,
-                    matchedIngredientName: match.ingredient.name,
-                    matchedIngredientID: IngredientCatalog.canonicalIdentifier(for: match.ingredient.name),
-                    confidence: match.confidence
-                )
-            }
+            detectEntry(from: phrase)
+        }
+    }
 
+    public static func detectEntry(from token: String) -> DetectedPantryEntry {
+        if let match = IngredientCatalog.matchIngredient(for: token) {
             return DetectedPantryEntry(
-                rawText: phrase,
-                matchedIngredientName: phrase,
-                matchedIngredientID: nil,
-                confidence: .needsReview
+                rawText: token,
+                matchedIngredientName: match.ingredient.name,
+                matchedIngredientID: IngredientCatalog.canonicalIdentifier(for: match.ingredient.name),
+                confidence: match.confidence
             )
         }
+
+        return DetectedPantryEntry(
+            rawText: token,
+            matchedIngredientName: token,
+            matchedIngredientID: nil,
+            confidence: .needsReview
+        )
     }
 
     public static func detectBarcodeEntry(productName: String?, barcode: String) -> DetectedPantryEntry {
