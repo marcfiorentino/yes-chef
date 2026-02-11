@@ -315,14 +315,7 @@ struct PantryTabView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    switch mode {
-                    case .type:
-                        typedEntryContent
-                    case .speak:
-                        speakEntryContent
-                    case .scan:
-                        scanEntryContent
-                    }
+                    pantryModeContent
                 } header: {
                     Text("Add Ingredient")
                 }
@@ -447,6 +440,18 @@ struct PantryTabView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var pantryModeContent: some View {
+        switch mode {
+        case .type:
+            typedEntryContent
+        case .speak:
+            speakEntryContent
+        case .scan:
+            scanEntryContent
+        }
     }
 
     private var speakEntryContent: some View {
@@ -1069,7 +1074,9 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
         }
 
         func scannerViewController(_ controller: ScannerViewController, didDetect code: String) {
-            viewModel.didScan(code: code)
+            Task { @MainActor in
+                viewModel.didScan(code: code)
+            }
         }
     }
 }
