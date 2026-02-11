@@ -2,12 +2,12 @@ import XCTest
 @testable import YesChefCore
 
 final class PantryInputProcessingTests: XCTestCase {
-    func testParseTranscriptPhrasesSplitsCommaAndNewlineAndAnd() {
-        let transcript = "eggs, milk and garlic\nonion"
+    func testParseTranscriptPhrasesSplitsCommaNewlineAndAndSpaces() {
+        let transcript = "eggs, milk and garlic\nonion basil parsley"
 
         let phrases = PantryInputProcessor.parseTranscriptPhrases(transcript)
 
-        XCTAssertEqual(phrases, ["eggs", "milk", "garlic", "onion"])
+        XCTAssertEqual(phrases, ["eggs", "milk", "garlic", "onion", "basil", "parsley"])
     }
 
     func testParseTranscriptPhrasesSplitsAmpersand() {
@@ -26,8 +26,16 @@ final class PantryInputProcessingTests: XCTestCase {
         XCTAssertEqual(phrases, ["Eggs", "milk"])
     }
 
+    func testParseTranscriptTokensExcludesTrailingTokenDuringLiveCapture() {
+        let transcript = "eggs butter basi"
+
+        let phrases = PantryInputProcessor.parseTranscriptTokens(transcript, includeTrailingToken: false)
+
+        XCTAssertEqual(phrases, ["eggs", "butter"])
+    }
+
     func testDetectEntriesMatchesSeededSynonyms() {
-        let entries = PantryInputProcessor.detectEntries(from: "evoo, boneless chicken breast, pepper")
+        let entries = PantryInputProcessor.detectEntries(from: "evoo, chicken pepper")
 
         XCTAssertEqual(entries.map(\.matchedIngredientName), ["Olive Oil", "Chicken Breast", "Black Pepper"])
         XCTAssertEqual(entries[0].confidence, .high)
@@ -37,10 +45,10 @@ final class PantryInputProcessingTests: XCTestCase {
         XCTAssertTrue(entries[0].isIncluded)
     }
 
-    func testDetectEntriesMarksUnknownPhraseForReview() {
-        let entries = PantryInputProcessor.detectEntries(from: "dragon fruit")
+    func testDetectEntriesMarksUnknownTokenForReview() {
+        let entries = PantryInputProcessor.detectEntries(from: "dragonfruit")
 
-        XCTAssertEqual(entries.first?.matchedIngredientName, "dragon fruit")
+        XCTAssertEqual(entries.first?.matchedIngredientName, "dragonfruit")
         XCTAssertEqual(entries.first?.confidence, .needsReview)
     }
 }
