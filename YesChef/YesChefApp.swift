@@ -3,6 +3,7 @@ import SwiftUI
 import AVFoundation
 import Speech
 import UIKit
+import Vision
 import YesChefCore
 
 @main
@@ -305,6 +306,7 @@ struct PantryTabView: View {
     @State private var reviewSheetPresented = false
     @State private var speakErrorHint: String?
     @State private var addBannerMessage: String?
+    @State private var scanPresented = false
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
@@ -398,13 +400,23 @@ struct PantryTabView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .onReceive(scannerVM.$detectedCode.compactMap { $0 }) { code in
-                Task {
-                    let entry = await scannerVM.resolveEntry(for: code)
-                    reviewEntries = [entry]
-                    reviewSource = .scanned
-                    reviewRawInput = entry.rawText
-                    reviewSheetPresented = true
+            .onChange(of: mode) { _, newMode in
+                guard newMode == .scan else { return }
+                scanPresented = true
+            }
+            .fullScreenCover(isPresented: $scanPresented, onDismiss: {
+                scannerVM.stopSession()
+            }) {
+                ScanCaptureScreen(scannerVM: scannerVM) { entries, source, rawInput in
+                    reviewEntries = entries
+                    reviewSource = source
+                    reviewRawInput = rawInput
+                    scanPresented = false
+                    DispatchQueue.main.async {
+                        reviewSheetPresented = true
+                    }
+                } onClose: {
+                    scanPresented = false
                 }
             }
         }
@@ -547,17 +559,228 @@ struct PantryTabView: View {
 
     private var scanEntryContent: some View {
         VStack(alignment: .leading, spacing: 12) {
-            BarcodeScannerView(viewModel: scannerVM)
-                .frame(height: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-
-            if let status = scannerVM.statusText {
-                Text(status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Text("Open Scan to use Barcode or Photo capture.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Open Scan") {
+                scanPresented = true
             }
+            .buttonStyle(.borderedProminent)
         }
         .padding(.vertical, 6)
+    }
+}
+
+struct ScanCaptureScreen: View {
+    enum ScanMode: String, CaseIterable, Identifiable {
+        case barcode = "Barcode"
+        case photo = "Photo"
+
+        var id: String { rawValue }
+    }
+
+    @ObservedObject var scannerVM: BarcodeScannerViewModel
+    var onReviewDetected: ([DetectedPantryEntry], PantryEntrySource, String?) -> Void
+    var onClose: () -> Void
+
+    @State private var mode: ScanMode = .barcode
+    @State private var isRunning = true
+    @State private var capturedPhoto: UIImage?
+    @State private var pendingBarcodeEntry: DetectedPantryEntry?
+    @State private var barcodeResultPresented = false
+    @State private var isAnalyzingPhoto = false
+    @State private var noIngredientsMessage: String?
+    @State private var photoCaptureTrigger = 0
+    @StateObject private var analyzer = PhotoIngredientAnalyzer()
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                headerControls
+                Picker("Scan Mode", selection: $mode) {
+                    ForEach(ScanMode.allCases) { scanMode in
+                        Text(scanMode.rawValue).tag(scanMode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+
+                ScanCaptureView(mode: mode, isRunning: isRunning, photoCaptureTrigger: photoCaptureTrigger, onBarcodeDetected: handleBarcodeDetected, onPhotoCaptured: handlePhotoCaptured)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal)
+
+                if let status = scannerVM.statusText {
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.top, 8)
+                }
+
+                if mode == .photo {
+                    photoControls
+                }
+
+                if let noIngredientsMessage {
+                    Text(noIngredientsMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .padding()
+                        .multilineTextAlignment(.center)
+                }
+
+                Spacer()
+            }
+        }
+        .onDisappear {
+            scannerVM.stopSession()
+            isRunning = false
+        }
+        .onChange(of: mode) { _, newMode in
+            pendingBarcodeEntry = nil
+            barcodeResultPresented = false
+            noIngredientsMessage = nil
+            if newMode == .barcode {
+                capturedPhoto = nil
+            }
+            if !isRunning {
+                startCapture()
+            }
+        }
+        .sheet(isPresented: $barcodeResultPresented) {
+            NavigationStack {
+                VStack(spacing: 16) {
+                    Text("Barcode Detected")
+                        .font(.headline)
+                    Text(pendingBarcodeEntry?.rawText ?? "Detected item")
+                        .font(.title3)
+                    Button("Review & Add") {
+                        if let entry = pendingBarcodeEntry {
+                            onReviewDetected([entry], .scanned, entry.rawText)
+                        }
+                        pendingBarcodeEntry = nil
+                        barcodeResultPresented = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Resume scanning") {
+                        pendingBarcodeEntry = nil
+                        barcodeResultPresented = false
+                        startCapture()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+            }
+            .presentationDetents([.fraction(0.3)])
+        }
+    }
+
+    private var headerControls: some View {
+        HStack {
+            Button("Close") {
+                stopCapture()
+                onClose()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Spacer()
+
+            Button(isRunning ? "Stop" : "Start") {
+                if isRunning { stopCapture() } else { startCapture() }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding()
+    }
+
+    private var photoControls: some View {
+        VStack(spacing: 12) {
+            if let capturedPhoto {
+                Image(uiImage: capturedPhoto)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(height: 140)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                HStack {
+                    Button("Retake") {
+                        self.capturedPhoto = nil
+                        noIngredientsMessage = nil
+                        startCapture()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Use Photo") {
+                        analyzeCapturedPhoto()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isAnalyzingPhoto)
+                }
+            } else {
+                Button {
+                    photoCaptureTrigger += 1
+                } label: {
+                    Image(systemName: "camera.circle.fill")
+                        .font(.system(size: 60))
+                        .foregroundStyle(.white)
+                }
+                .disabled(!isRunning)
+            }
+
+            if isAnalyzingPhoto {
+                ProgressView("Analyzing photo…")
+                    .progressViewStyle(.circular)
+                    .tint(.white)
+            }
+        }
+        .padding(.top, 14)
+    }
+
+    private func handleBarcodeDetected(_ code: String) {
+        guard mode == .barcode, isRunning else { return }
+        Task {
+            let entry = await scannerVM.resolveEntry(for: code)
+            await MainActor.run {
+                pendingBarcodeEntry = entry
+                stopCapture()
+                barcodeResultPresented = true
+            }
+        }
+    }
+
+    private func handlePhotoCaptured(_ image: UIImage) {
+        guard mode == .photo else { return }
+        capturedPhoto = image
+        stopCapture()
+    }
+
+    private func analyzeCapturedPhoto() {
+        guard let capturedPhoto, !isAnalyzingPhoto else { return }
+        isAnalyzingPhoto = true
+        noIngredientsMessage = nil
+        Task {
+            let entries = await analyzer.analyze(image: capturedPhoto)
+            await MainActor.run {
+                isAnalyzingPhoto = false
+                if entries.isEmpty {
+                    noIngredientsMessage = "We couldn’t detect ingredients from that photo. Try another photo or add items manually."
+                    return
+                }
+                onReviewDetected(entries, .scanned, "photo_capture")
+            }
+        }
+    }
+
+    private func stopCapture() {
+        isRunning = false
+        scannerVM.stopSession()
+    }
+
+    private func startCapture() {
+        isRunning = true
+        scannerVM.startSession()
     }
 }
 
@@ -1134,6 +1357,14 @@ final class BarcodeScannerViewModel: NSObject, ObservableObject {
 
     private var lastCode: String?
 
+    func startSession() {
+        statusText = "Align barcode inside the frame"
+    }
+
+    func stopSession() {
+        statusText = "Capture stopped"
+    }
+
     func didScan(code: String) {
         guard code != lastCode else { return }
         lastCode = code
@@ -1170,8 +1401,12 @@ private struct OpenFoodFactsResponse: Decodable {
     }
 }
 
-struct BarcodeScannerView: UIViewControllerRepresentable {
-    @ObservedObject var viewModel: BarcodeScannerViewModel
+struct ScanCaptureView: UIViewControllerRepresentable {
+    let mode: ScanCaptureScreen.ScanMode
+    let isRunning: Bool
+    let photoCaptureTrigger: Int
+    let onBarcodeDetected: (String) -> Void
+    let onPhotoCaptured: (UIImage) -> Void
 
     func makeUIViewController(context: Context) -> ScannerViewController {
         let vc = ScannerViewController()
@@ -1179,35 +1414,47 @@ struct BarcodeScannerView: UIViewControllerRepresentable {
         return vc
     }
 
-    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {
+        uiViewController.update(mode: mode, isRunning: isRunning, photoCaptureTrigger: photoCaptureTrigger)
+    }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(viewModel: viewModel)
+        Coordinator(onBarcodeDetected: onBarcodeDetected, onPhotoCaptured: onPhotoCaptured)
     }
 
     final class Coordinator: NSObject, ScannerViewControllerDelegate {
-        private let viewModel: BarcodeScannerViewModel
+        let onBarcodeDetected: (String) -> Void
+        let onPhotoCaptured: (UIImage) -> Void
 
-        init(viewModel: BarcodeScannerViewModel) {
-            self.viewModel = viewModel
+        init(onBarcodeDetected: @escaping (String) -> Void, onPhotoCaptured: @escaping (UIImage) -> Void) {
+            self.onBarcodeDetected = onBarcodeDetected
+            self.onPhotoCaptured = onPhotoCaptured
         }
 
         func scannerViewController(_ controller: ScannerViewController, didDetect code: String) {
-            Task { @MainActor in
-                viewModel.didScan(code: code)
-            }
+            onBarcodeDetected(code)
+        }
+
+        func scannerViewController(_ controller: ScannerViewController, didCapture image: UIImage) {
+            onPhotoCaptured(image)
         }
     }
 }
 
 protocol ScannerViewControllerDelegate: AnyObject {
     func scannerViewController(_ controller: ScannerViewController, didDetect code: String)
+    func scannerViewController(_ controller: ScannerViewController, didCapture image: UIImage)
 }
 
-final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate, AVCapturePhotoCaptureDelegate {
     weak var delegate: ScannerViewControllerDelegate?
 
     private let session = AVCaptureSession()
+    private let metadataOutput = AVCaptureMetadataOutput()
+    private let photoOutput = AVCapturePhotoOutput()
+    private var preview: AVCaptureVideoPreviewLayer?
+    private var configured = false
+    private var lastPhotoCaptureTrigger = 0
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -1225,6 +1472,9 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     }
 
     private func configureSession() {
+        guard !configured else { return }
+        configured = true
+
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input)
@@ -1232,16 +1482,48 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
 
         session.addInput(input)
 
-        let output = AVCaptureMetadataOutput()
-        guard session.canAddOutput(output) else { return }
-        session.addOutput(output)
-        output.setMetadataObjectsDelegate(self, queue: .main)
-        output.metadataObjectTypes = [.ean8, .ean13, .upce]
+        if session.canAddOutput(metadataOutput) {
+            session.addOutput(metadataOutput)
+            metadataOutput.setMetadataObjectsDelegate(self, queue: .main)
+            metadataOutput.metadataObjectTypes = [.ean8, .ean13, .upce]
+        }
+
+        if session.canAddOutput(photoOutput) {
+            session.addOutput(photoOutput)
+        }
 
         let preview = AVCaptureVideoPreviewLayer(session: session)
         preview.videoGravity = .resizeAspectFill
         preview.frame = view.layer.bounds
         view.layer.addSublayer(preview)
+        self.preview = preview
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        preview?.frame = view.bounds
+    }
+
+    func update(mode: ScanCaptureScreen.ScanMode, isRunning: Bool, photoCaptureTrigger: Int) {
+        metadataOutput.metadataObjectTypes = mode == .barcode ? [.ean8, .ean13, .upce] : []
+
+        if isRunning {
+            if !session.isRunning { session.startRunning() }
+        } else if session.isRunning {
+            session.stopRunning()
+        }
+
+        if mode == .photo,
+           photoCaptureTrigger != lastPhotoCaptureTrigger,
+           session.isRunning {
+            lastPhotoCaptureTrigger = photoCaptureTrigger
+            captureStillPhoto()
+        }
+    }
+
+    private func captureStillPhoto() {
+        let settings = AVCapturePhotoSettings()
+        photoOutput.capturePhoto(with: settings, delegate: self)
     }
 
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
@@ -1249,6 +1531,89 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
               let value = object.stringValue
         else { return }
         delegate?.scannerViewController(self, didDetect: value)
+    }
+
+    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        guard error == nil,
+              let data = photo.fileDataRepresentation(),
+              let image = UIImage(data: data)
+        else { return }
+        delegate?.scannerViewController(self, didCapture: image)
+    }
+}
+
+@MainActor
+final class PhotoIngredientAnalyzer: ObservableObject {
+    private let ignoreTokens: Set<String> = ["ingredients", "nutrition", "calories", "facts", "serving", "brand", "contains", "daily", "value", "product", "www"]
+
+    func analyze(image: UIImage) async -> [DetectedPantryEntry] {
+        guard let cgImage = image.cgImage else { return [] }
+
+        var candidates = await recognizedTextCandidates(from: cgImage)
+        if let hint = await imageClassificationHint(from: cgImage) {
+            candidates.append(hint)
+        }
+
+        let normalized = Array(Set(candidates.map { $0.lowercased() }))
+        guard !normalized.isEmpty else { return [] }
+
+        let entries = PantryInputProcessor.detectEntries(from: normalized.joined(separator: ", "))
+        return entries.filter { !$0.matchedIngredientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func recognizedTextCandidates(from cgImage: CGImage) async -> [String] {
+        await withCheckedContinuation { continuation in
+            let request = VNRecognizeTextRequest { request, _ in
+                guard let observations = request.results as? [VNRecognizedTextObservation] else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                let lines = observations.compactMap { $0.topCandidates(1).first?.string }
+                continuation.resume(returning: self.extractCandidates(from: lines))
+            }
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = true
+
+            let handler = VNImageRequestHandler(cgImage: cgImage)
+            try? handler.perform([request])
+        }
+    }
+
+    private func imageClassificationHint(from cgImage: CGImage) async -> String? {
+        await withCheckedContinuation { continuation in
+            let request = VNClassifyImageRequest { request, _ in
+                guard let best = (request.results as? [VNClassificationObservation])?.first,
+                      best.confidence > 0.45,
+                      !best.identifier.contains("packaged")
+                else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: best.identifier.replacingOccurrences(of: "_", with: " "))
+            }
+            let handler = VNImageRequestHandler(cgImage: cgImage)
+            try? handler.perform([request])
+        }
+    }
+
+    private func extractCandidates(from lines: [String]) -> [String] {
+        var candidates: [String] = []
+        for line in lines {
+            let lower = line.lowercased()
+            let normalized = lower.replacingOccurrences(of: "ingredients:", with: "")
+            let parts = normalized.split(whereSeparator: { [",", ";", "(", ")", "."].contains($0) })
+            for part in parts {
+                let token = String(part)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "[^a-z\\s-]", with: "", options: .regularExpression)
+                guard token.count >= 3,
+                      token.rangeOfCharacter(from: .decimalDigits) == nil,
+                      !ignoreTokens.contains(token)
+                else { continue }
+                candidates.append(token)
+            }
+        }
+        return candidates
     }
 }
 #endif
