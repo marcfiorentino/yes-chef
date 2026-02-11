@@ -16,9 +16,23 @@ struct YesChefApp: App {
 
 @MainActor
 final class YesChefAppModel: ObservableObject {
+    enum Tab: Hashable {
+        case pantry
+        case recipes
+        case shop
+        case profile
+    }
+
     @Published var pantry = PantryViewModel()
     @Published var recipesVM = RecipesViewModel()
     @Published var shop = ShopViewModel()
+    @Published var selectedTab: Tab = .pantry
+    @Published var hasOnboarded = false {
+        didSet { UserDefaults.standard.set(hasOnboarded, forKey: Self.hasOnboardedKey) }
+    }
+    @Published var cookedEvents: [CookedEvent] = [] {
+        didSet { save(cookedEvents, key: Self.cookedEventsKey) }
+    }
     @Published var userPrefs = UserPrefs() {
         didSet {
             save(userPrefs, key: Self.prefsKey)
@@ -29,6 +43,8 @@ final class YesChefAppModel: ObservableObject {
     private static let pantryKey = "yeschef.pantry"
     private static let shopKey = "yeschef.shop"
     private static let prefsKey = "yeschef.prefs"
+    private static let cookedEventsKey = "yeschef.cookedEvents"
+    private static let hasOnboardedKey = "yeschef.hasOnboarded"
 
     init() {
         if let loadedRecipes = try? RecipeLoader.loadSeededRecipes() {
@@ -47,6 +63,11 @@ final class YesChefAppModel: ObservableObject {
             userPrefs = storedPrefs
         }
 
+        if let storedEvents: [CookedEvent] = load(key: Self.cookedEventsKey) {
+            cookedEvents = storedEvents
+        }
+
+        hasOnboarded = UserDefaults.standard.bool(forKey: Self.hasOnboardedKey)
         refreshMatches()
     }
 
@@ -71,6 +92,11 @@ final class YesChefAppModel: ObservableObject {
         objectWillChange.send()
     }
 
+    func addMissingFromAlmostThereRecipes() {
+        let ingredients = recipesVM.state.almostThere.flatMap(\.missingIngredients)
+        addMissingToShop(ingredients)
+    }
+
     func addUnlockIngredientToShop(_ ingredientName: String) {
         shop.addIngredient(name: ingredientName)
         save(shop.shoppingList, key: Self.shopKey)
@@ -80,6 +106,19 @@ final class YesChefAppModel: ObservableObject {
     func refreshMatches() {
         recipesVM.updateMatches(pantryItems: pantry.pantryItems, prefs: userPrefs)
         objectWillChange.send()
+    }
+
+    func completeOnboarding() {
+        hasOnboarded = true
+        selectedTab = .pantry
+    }
+
+    func resetOnboarding() {
+        hasOnboarded = false
+    }
+
+    func logCooked(recipeID: UUID, servings: Int) {
+        cookedEvents.insert(CookedEvent(recipeID: recipeID, servings: servings), at: 0)
     }
 
     var unlockSuggestions: [UnlockSuggestion] {
@@ -108,28 +147,136 @@ private extension Optional {
 }
 
 struct RootTabView: View {
+    @EnvironmentObject private var appModel: YesChefAppModel
+
     var body: some View {
-        TabView {
+        TabView(selection: $appModel.selectedTab) {
             PantryTabView()
                 .tabItem { Label("Pantry", systemImage: "cabinet") }
+                .tag(YesChefAppModel.Tab.pantry)
 
             RecipesTabView()
                 .tabItem { Label("Recipes", systemImage: "fork.knife") }
+                .tag(YesChefAppModel.Tab.recipes)
 
             ShopTabView()
                 .tabItem { Label("Shop", systemImage: "cart") }
+                .tag(YesChefAppModel.Tab.shop)
 
             ProfileTabView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle") }
+                .tag(YesChefAppModel.Tab.profile)
         }
         .tint(.orange)
+        .fullScreenCover(isPresented: Binding(get: { !appModel.hasOnboarded }, set: { _ in })) {
+            OnboardingFlowView()
+                .environmentObject(appModel)
+        }
+    }
+}
+
+struct OnboardingFlowView: View {
+    @EnvironmentObject private var appModel: YesChefAppModel
+    @State private var step = 0
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 24) {
+                Text("Welcome to YesChef")
+                    .font(.largeTitle.bold())
+                Text("Step \(step + 1) of 4")
+                    .foregroundStyle(.secondary)
+
+                Group {
+                    switch step {
+                    case 0:
+                        optionSection(title: "Choose diet template(s)", options: DietTag.allCases, selection: $appModel.userPrefs.enabledDiets)
+                    case 1:
+                        optionSection(title: "Allergens (optional)", options: Allergen.allCases, selection: $appModel.userPrefs.allergens)
+                    case 2:
+                        macroInputs
+                    default:
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("You're all set!")
+                                .font(.title3.bold())
+                            Text("Finish onboarding to start planning from your pantry.")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                HStack {
+                    if step > 0 {
+                        Button("Back") { step -= 1 }
+                    }
+                    Spacer()
+                    Button(step == 3 ? "Finish" : "Next") {
+                        if step == 3 {
+                            appModel.completeOnboarding()
+                        } else {
+                            step += 1
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding()
+        }
+    }
+
+    private var macroInputs: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Macro targets (optional)")
+                .font(.headline)
+            MacroTargetField(title: "Calories", suffix: "cal", value: Binding(
+                get: { appModel.userPrefs.targetCalories },
+                set: { appModel.userPrefs.targetCalories = $0 }
+            ))
+            MacroTargetField(title: "Protein", value: Binding(
+                get: { appModel.userPrefs.targetProtein },
+                set: { appModel.userPrefs.targetProtein = $0 }
+            ))
+            MacroTargetField(title: "Carbs", value: Binding(
+                get: { appModel.userPrefs.targetCarbs },
+                set: { appModel.userPrefs.targetCarbs = $0 }
+            ))
+            MacroTargetField(title: "Fat", value: Binding(
+                get: { appModel.userPrefs.targetFat },
+                set: { appModel.userPrefs.targetFat = $0 }
+            ))
+        }
+    }
+
+    private func optionSection<T: RawRepresentable & Hashable>(title: String, options: [T], selection: Binding<Set<T>>) -> some View where T.RawValue == String {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title)
+                .font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 12)]) {
+                ForEach(options, id: \.self) { option in
+                    let isSelected = selection.wrappedValue.contains(option)
+                    Button(option.rawValue) {
+                        if isSelected {
+                            selection.wrappedValue.remove(option)
+                        } else {
+                            selection.wrappedValue.insert(option)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(isSelected ? .orange : .gray)
+                }
+            }
+        }
     }
 }
 
 struct PantryTabView: View {
     @EnvironmentObject private var appModel: YesChefAppModel
+    @FocusState private var isIngredientInputFocused: Bool
     @State private var typedIngredient = ""
     @State private var quantity = ""
+    private let staples = ["Eggs", "Milk", "Chicken", "Rice", "Garlic", "Onion", "Olive Oil", "Salt", "Pepper"]
 
     var body: some View {
         NavigationStack {
@@ -139,6 +286,7 @@ struct PantryTabView: View {
                         HStack(spacing: 8) {
                             TextField("Add ingredient", text: $typedIngredient)
                                 .textInputAutocapitalization(.words)
+                                .focused($isIngredientInputFocused)
                                 .onChange(of: typedIngredient) { _, newValue in
                                     appModel.pantry.updateEntryText(newValue)
                                     appModel.objectWillChange.send()
@@ -153,6 +301,22 @@ struct PantryTabView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                Text("Quick add staples")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                ForEach(staples, id: \.self) { staple in
+                                    Button(staple) {
+                                        typedIngredient = staple
+                                        appModel.addPantryItem(name: staple, quantity: "—")
+                                        typedIngredient = ""
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
                         }
 
                         if !appModel.pantry.suggestions.isEmpty {
@@ -177,8 +341,19 @@ struct PantryTabView: View {
 
                 Section("In Your Pantry") {
                     if appModel.pantry.pantryItems.isEmpty {
-                        Text("Start by adding ingredients you already have.")
-                            .foregroundStyle(.secondary)
+                        VStack(spacing: 12) {
+                            Text("Your pantry is empty.")
+                                .font(.headline)
+                            Text("Add ingredients to unlock recipe matches.")
+                                .foregroundStyle(.secondary)
+                            Button("Add ingredients") {
+                                isIngredientInputFocused = true
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .font(.title3)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
                     } else {
                         ForEach(appModel.pantry.pantryItems) { item in
                             HStack {
@@ -266,9 +441,23 @@ struct RecipeCard: View {
                         .padding(.vertical, 2)
                         .background(match.missingCount == 0 ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
                         .clipShape(Capsule())
+                    Text("\(Int(match.pantryMatchPercentage * 100))% match")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                if !match.badges.isEmpty {
+                    HStack {
+                        ForEach(match.badges.prefix(2), id: \.self) { badge in
+                            Text(badge)
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.orange.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 4)
@@ -277,22 +466,28 @@ struct RecipeCard: View {
 
 struct RecipeDetailView: View {
     @EnvironmentObject private var appModel: YesChefAppModel
+    @State private var servings = 1
     let match: RecipeMatchResult
 
     private var availableIngredients: [RecipeIngredient] {
         match.recipe.ingredients.filter { !match.missingIngredients.contains($0) }
     }
 
+    private var scaledNutrition: NutritionSummary {
+        match.recipe.nutrition.scaled(forServings: servings)
+    }
+
     var body: some View {
         List {
             Section {
                 VStack(spacing: 12) {
-                    MacroRing(nutrition: match.recipe.nutrition, lineWidth: 16)
+                    MacroRing(nutrition: scaledNutrition, lineWidth: 16)
                         .frame(width: 160, height: 160)
-                    Text("\(match.recipe.nutrition.calories) cal")
+                    Text("\(scaledNutrition.calories) cal")
                         .font(.title3.bold())
-                    Text("P \(match.recipe.nutrition.protein)g • C \(match.recipe.nutrition.carbs)g • F \(match.recipe.nutrition.fat)g")
+                    Text("P \(scaledNutrition.protein)g • C \(scaledNutrition.carbs)g • F \(scaledNutrition.fat)g")
                         .foregroundStyle(.secondary)
+                    Stepper("Servings: \(servings)", value: $servings, in: 1...8)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -315,6 +510,12 @@ struct RecipeDetailView: View {
                 }
             }
 
+            Button("Cooked it") {
+                appModel.logCooked(recipeID: match.recipe.id, servings: servings)
+            }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity)
+
             if !match.missingIngredients.isEmpty {
                 Button("Add Missing to Shop List") {
                     appModel.addMissingToShop(match.missingIngredients)
@@ -329,6 +530,7 @@ struct RecipeDetailView: View {
 
 struct ShopTabView: View {
     @EnvironmentObject private var appModel: YesChefAppModel
+    @State private var expandedUnlockIDs: Set<UUID> = []
 
     var body: some View {
         NavigationStack {
@@ -339,13 +541,30 @@ struct ShopTabView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(appModel.unlockSuggestions) { suggestion in
-                            Button {
-                                appModel.addUnlockIngredientToShop(suggestion.ingredient.name)
-                            } label: {
-                                HStack {
-                                    Text(suggestion.ingredient.name)
-                                    Spacer()
-                                    Text("Unlocks \(suggestion.unlockCount) recipes")
+                            VStack(alignment: .leading, spacing: 6) {
+                                Button {
+                                    appModel.addUnlockIngredientToShop(suggestion.ingredient.name)
+                                } label: {
+                                    HStack {
+                                        Text(suggestion.ingredient.name)
+                                        Spacer()
+                                        Text("Unlocks \(suggestion.unlockCount) recipes")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Button(expandedUnlockIDs.contains(suggestion.id) ? "Hide why" : "Why") {
+                                    if expandedUnlockIDs.contains(suggestion.id) {
+                                        expandedUnlockIDs.remove(suggestion.id)
+                                    } else {
+                                        expandedUnlockIDs.insert(suggestion.id)
+                                    }
+                                }
+                                .font(.caption)
+
+                                if expandedUnlockIDs.contains(suggestion.id) {
+                                    Text(suggestion.recipeNames.joined(separator: ", "))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -356,8 +575,14 @@ struct ShopTabView: View {
 
                 Section("Shopping List") {
                     if appModel.shop.shoppingList.isEmpty {
-                        Text("Your shopping list is empty.")
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Your shopping list is empty.")
+                                .foregroundStyle(.secondary)
+                            Button("Add missing ingredients from recipes") {
+                                appModel.addMissingFromAlmostThereRecipes()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
                     } else {
                         ForEach(appModel.shop.shoppingList, id: \.ingredientName) { ingredient in
                             Text("\(ingredient.ingredientName) — \(ingredient.quantity)")
@@ -401,7 +626,26 @@ struct ProfileTabView: View {
                     }
                 }
 
+                Section("Allergens") {
+                    ForEach(Allergen.allCases, id: \.self) { allergen in
+                        Toggle(allergen.rawValue, isOn: Binding(
+                            get: { appModel.userPrefs.allergens.contains(allergen) },
+                            set: { enabled in
+                                if enabled {
+                                    appModel.userPrefs.allergens.insert(allergen)
+                                } else {
+                                    appModel.userPrefs.allergens.remove(allergen)
+                                }
+                            }
+                        ))
+                    }
+                }
+
                 Section("Macro Targets (optional)") {
+                    MacroTargetField(title: "Calories", suffix: "cal", value: Binding(
+                        get: { appModel.userPrefs.targetCalories },
+                        set: { appModel.userPrefs.targetCalories = $0 }
+                    ))
                     MacroTargetField(title: "Protein", value: Binding(
                         get: { appModel.userPrefs.targetProtein },
                         set: { appModel.userPrefs.targetProtein = $0 }
@@ -415,6 +659,12 @@ struct ProfileTabView: View {
                         set: { appModel.userPrefs.targetFat = $0 }
                     ))
                 }
+
+                Section("Testing") {
+                    Button("Reset onboarding") {
+                        appModel.resetOnboarding()
+                    }
+                }
             }
             .navigationTitle("Profile")
         }
@@ -423,13 +673,14 @@ struct ProfileTabView: View {
 
 struct MacroTargetField: View {
     let title: String
+    var suffix: String = "g"
     @Binding var value: Int?
 
     var body: some View {
         HStack {
             Text(title)
             Spacer()
-            TextField("g", text: Binding(
+            TextField(suffix, text: Binding(
                 get: { value.map(String.init) ?? "" },
                 set: { value = Int($0) }
             ))

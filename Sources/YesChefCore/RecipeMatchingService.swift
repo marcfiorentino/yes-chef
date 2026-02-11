@@ -12,7 +12,14 @@ public struct RecipeMatchingService {
                 let canonical = IngredientCatalog.canonicalName(for: ingredient.ingredientName).lowercased()
                 return !pantrySet.contains(canonical)
             }
-            return RecipeMatchResult(recipe: recipe, missingIngredients: missing)
+            let matchPercentage = recipe.ingredients.isEmpty ? 0 : Double(recipe.ingredients.count - missing.count) / Double(recipe.ingredients.count)
+            let dietCompatibilityScore = Set(recipe.dietTags).intersection(userPrefs.enabledDiets).count
+            return RecipeMatchResult(
+                recipe: recipe,
+                missingIngredients: missing,
+                pantryMatchPercentage: matchPercentage,
+                dietCompatibilityScore: dietCompatibilityScore
+            )
         }
         .sorted {
             rank(lhs: $0, rhs: $1, prefs: userPrefs)
@@ -30,11 +37,13 @@ public struct RecipeMatchingService {
     public func topUnlockSuggestions(recipes: [Recipe], pantryItems: [PantryItem], limit: Int = 3, userPrefs: UserPrefs = UserPrefs()) -> [UnlockSuggestion] {
         let matches = match(recipes: recipes, pantryItems: pantryItems, userPrefs: userPrefs)
         var unlockScores: [String: Int] = [:]
+        var recipeUnlockMap: [String: Set<String>] = [:]
 
         for match in matches where match.missingCount > 0 {
             for ingredient in match.missingIngredients {
                 let canonical = IngredientCatalog.canonicalName(for: ingredient.ingredientName)
                 unlockScores[canonical, default: 0] += 1
+                recipeUnlockMap[canonical, default: []].insert(match.recipe.name)
             }
         }
 
@@ -48,38 +57,78 @@ public struct RecipeMatchingService {
             .prefix(limit)
             .map { name, count in
                 let seeded = IngredientCatalog.seeded.first(where: { $0.name == name }) ?? Ingredient(name: name)
-                return UnlockSuggestion(ingredient: seeded, unlockCount: count)
+                let recipeNames = recipeUnlockMap[name, default: []].sorted()
+                return UnlockSuggestion(ingredient: seeded, unlockCount: count, recipeNames: recipeNames)
             }
     }
 
     private func filter(recipes: [Recipe], prefs: UserPrefs) -> [Recipe] {
-        guard !prefs.enabledDiets.isEmpty else { return recipes }
-        return recipes.filter { recipe in
-            !prefs.enabledDiets.isDisjoint(with: Set(recipe.dietTags))
+        recipes.filter { recipe in
+            isDietCompatible(recipe: recipe, prefs: prefs) && !containsFilteredAllergen(recipe: recipe, prefs: prefs)
         }
     }
 
     private func rank(lhs: RecipeMatchResult, rhs: RecipeMatchResult, prefs: UserPrefs) -> Bool {
+        if lhs.pantryMatchPercentage != rhs.pantryMatchPercentage {
+            return lhs.pantryMatchPercentage > rhs.pantryMatchPercentage
+        }
+
         if lhs.missingCount != rhs.missingCount {
             return lhs.missingCount < rhs.missingCount
         }
 
-        if let lhsDistance = macroDistance(for: lhs.recipe, prefs: prefs),
-           let rhsDistance = macroDistance(for: rhs.recipe, prefs: prefs),
+        if lhs.dietCompatibilityScore != rhs.dietCompatibilityScore {
+            return lhs.dietCompatibilityScore > rhs.dietCompatibilityScore
+        }
+
+        if lhs.recipe.totalMinutes != rhs.recipe.totalMinutes {
+            return lhs.recipe.totalMinutes < rhs.recipe.totalMinutes
+        }
+
+        if let lhsDistance = proteinDistance(for: lhs.recipe, prefs: prefs),
+           let rhsDistance = proteinDistance(for: rhs.recipe, prefs: prefs),
            lhsDistance != rhsDistance {
             return lhsDistance < rhsDistance
         }
 
-        return lhs.recipe.totalMinutes < rhs.recipe.totalMinutes
+        return lhs.recipe.name < rhs.recipe.name
     }
 
-    private func macroDistance(for recipe: Recipe, prefs: UserPrefs) -> Int? {
-        guard prefs.targetProtein != nil || prefs.targetCarbs != nil || prefs.targetFat != nil else {
-            return nil
+    private func proteinDistance(for recipe: Recipe, prefs: UserPrefs) -> Int? {
+        guard let targetProtein = prefs.targetProtein else { return nil }
+        return abs(targetProtein - recipe.nutrition.protein)
+    }
+
+    private func isDietCompatible(recipe: Recipe, prefs: UserPrefs) -> Bool {
+        guard !prefs.enabledDiets.isEmpty else { return true }
+        return !prefs.enabledDiets.isDisjoint(with: Set(recipe.dietTags))
+    }
+
+    private func containsFilteredAllergen(recipe: Recipe, prefs: UserPrefs) -> Bool {
+        guard !prefs.allergens.isEmpty else { return false }
+        for ingredient in recipe.ingredients {
+            let allergens = allergensForIngredient(named: ingredient.ingredientName)
+            if !prefs.allergens.isDisjoint(with: allergens) {
+                return true
+            }
         }
-        let proteinDelta = abs((prefs.targetProtein ?? recipe.nutrition.protein) - recipe.nutrition.protein)
-        let carbsDelta = abs((prefs.targetCarbs ?? recipe.nutrition.carbs) - recipe.nutrition.carbs)
-        let fatDelta = abs((prefs.targetFat ?? recipe.nutrition.fat) - recipe.nutrition.fat)
-        return proteinDelta + carbsDelta + fatDelta
+        return false
+    }
+
+    private func allergensForIngredient(named name: String) -> Set<Allergen> {
+        let canonical = IngredientCatalog.canonicalName(for: name).lowercased()
+        if ["milk", "butter", "cheddar"].contains(where: canonical.contains) {
+            return [.dairy]
+        }
+        if ["pasta"].contains(where: canonical.contains) {
+            return [.gluten]
+        }
+        if ["egg"].contains(where: canonical.contains) {
+            return [.eggs]
+        }
+        if ["almond", "peanut", "walnut", "cashew", "pecan"].contains(where: canonical.contains) {
+            return [.nuts]
+        }
+        return []
     }
 }
