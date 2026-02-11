@@ -1,5 +1,8 @@
 #if canImport(SwiftUI)
 import SwiftUI
+import AVFoundation
+import Speech
+import UIKit
 import YesChefCore
 
 @main
@@ -74,6 +77,14 @@ final class YesChefAppModel: ObservableObject {
     func addPantryItem(name: String, quantity: String) {
         pantry.updateEntryText(name)
         guard pantry.confirmSave(quantity: quantity).isSome else { return }
+        save(pantry.pantryItems, key: Self.pantryKey)
+        refreshMatches()
+        objectWillChange.send()
+    }
+
+    func addDetectedPantryEntries(_ entries: [DetectedPantryEntry], source: PantryEntrySource, rawInput: String? = nil) {
+        guard !entries.isEmpty else { return }
+        _ = pantry.addDetectedEntries(entries, source: source, rawInput: rawInput)
         save(pantry.pantryItems, key: Self.pantryKey)
         refreshMatches()
         objectWillChange.send()
@@ -272,69 +283,46 @@ struct OnboardingFlowView: View {
 }
 
 struct PantryTabView: View {
+    enum EntryMode: String, CaseIterable, Identifiable {
+        case type = "Type"
+        case speak = "Speak"
+        case scan = "Scan"
+
+        var id: String { rawValue }
+    }
+
     @EnvironmentObject private var appModel: YesChefAppModel
     @FocusState private var isIngredientInputFocused: Bool
     @State private var typedIngredient = ""
     @State private var quantity = ""
+    @State private var mode: EntryMode = .type
+    @State private var reviewEntries: [DetectedPantryEntry] = []
+    @State private var reviewSource: PantryEntrySource = .spoken
+    @State private var reviewRawInput: String?
+    @StateObject private var speechVM = SpeechCaptureViewModel()
+    @StateObject private var scannerVM = BarcodeScannerViewModel()
+
     private let staples = ["Eggs", "Milk", "Chicken", "Rice", "Garlic", "Onion", "Olive Oil", "Salt", "Pepper"]
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    VStack(spacing: 12) {
-                        HStack(spacing: 8) {
-                            TextField("Add ingredient", text: $typedIngredient)
-                                .textInputAutocapitalization(.words)
-                                .focused($isIngredientInputFocused)
-                                .onChange(of: typedIngredient) { _, newValue in
-                                    appModel.pantry.updateEntryText(newValue)
-                                    appModel.objectWillChange.send()
-                                }
-                            TextField("Qty", text: $quantity)
-                                .frame(width: 72)
-                                .textFieldStyle(.roundedBorder)
-                            Button("Add") {
-                                appModel.addPantryItem(name: typedIngredient, quantity: quantity)
-                                typedIngredient = ""
-                                quantity = ""
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack {
-                                Text("Quick add staples")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                ForEach(staples, id: \.self) { staple in
-                                    Button(staple) {
-                                        typedIngredient = staple
-                                        appModel.addPantryItem(name: staple, quantity: "—")
-                                        typedIngredient = ""
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
-                            }
-                        }
-
-                        if !appModel.pantry.suggestions.isEmpty {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack {
-                                    ForEach(appModel.pantry.suggestions) { suggestion in
-                                        Button(suggestion.name) {
-                                            appModel.pantry.chooseSuggestion(suggestion)
-                                            typedIngredient = suggestion.name
-                                            appModel.objectWillChange.send()
-                                        }
-                                        .buttonStyle(.bordered)
-                                    }
-                                }
-                            }
+                    Picker("Entry Mode", selection: $mode) {
+                        ForEach(EntryMode.allCases) { entryMode in
+                            Text(entryMode.rawValue).tag(entryMode)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .pickerStyle(.segmented)
+
+                    switch mode {
+                    case .type:
+                        typedEntryContent
+                    case .speak:
+                        speakEntryContent
+                    case .scan:
+                        scanEntryContent
+                    }
                 } header: {
                     Text("Add Ingredient")
                 }
@@ -347,6 +335,7 @@ struct PantryTabView: View {
                             Text("Add ingredients to unlock recipe matches.")
                                 .foregroundStyle(.secondary)
                             Button("Add ingredients") {
+                                mode = .type
                                 isIngredientInputFocused = true
                             }
                             .buttonStyle(.borderedProminent)
@@ -360,11 +349,16 @@ struct PantryTabView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.ingredientName)
                                         .font(.headline)
-                                    if item.quantity != "—" {
-                                        Text(item.quantity)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                    HStack {
+                                        if item.quantity != "—" {
+                                            Text(item.quantity)
+                                        }
+                                        if item.source != .typed {
+                                            Text(item.source == .spoken ? "Speak" : "Scan")
+                                        }
                                     }
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 }
                                 Spacer()
                             }
@@ -376,6 +370,214 @@ struct PantryTabView: View {
             }
             .navigationTitle("Pantry")
             .listStyle(.insetGrouped)
+            .sheet(isPresented: Binding(
+                get: { !reviewEntries.isEmpty },
+                set: { isPresented in if !isPresented { reviewEntries = [] } }
+            )) {
+                NavigationStack {
+                    ReviewConfirmView(entries: $reviewEntries) {
+                        appModel.addDetectedPantryEntries(reviewEntries, source: reviewSource, rawInput: reviewRawInput)
+                        reviewEntries = []
+                        reviewRawInput = nil
+                    }
+                }
+            }
+            .onReceive(scannerVM.$detectedCode.compactMap { $0 }) { code in
+                Task {
+                    let entry = await scannerVM.resolveEntry(for: code)
+                    reviewEntries = [entry]
+                    reviewSource = .scanned
+                    reviewRawInput = entry.rawText
+                }
+            }
+        }
+    }
+
+    private var typedEntryContent: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 8) {
+                TextField("Add ingredient", text: $typedIngredient)
+                    .textInputAutocapitalization(.words)
+                    .focused($isIngredientInputFocused)
+                    .onChange(of: typedIngredient) { _, newValue in
+                        appModel.pantry.updateEntryText(newValue)
+                        appModel.objectWillChange.send()
+                    }
+                TextField("Qty", text: $quantity)
+                    .frame(width: 72)
+                    .textFieldStyle(.roundedBorder)
+                Button("Add") {
+                    appModel.addPantryItem(name: typedIngredient, quantity: quantity)
+                    typedIngredient = ""
+                    quantity = ""
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    Text("Quick add staples")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(staples, id: \.self) { staple in
+                        Button(staple) {
+                            typedIngredient = staple
+                            appModel.addPantryItem(name: staple, quantity: "—")
+                            typedIngredient = ""
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
+
+            if !appModel.pantry.suggestions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(appModel.pantry.suggestions) { suggestion in
+                            Button(suggestion.name) {
+                                appModel.pantry.chooseSuggestion(suggestion)
+                                typedIngredient = suggestion.name
+                                appModel.objectWillChange.send()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var speakEntryContent: some View {
+        VStack(spacing: 12) {
+            Button {
+                speechVM.toggleRecording()
+            } label: {
+                Image(systemName: speechVM.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(speechVM.isRecording ? .red : .orange)
+            }
+            Text(speechVM.isRecording ? "Listening… tap to stop" : "Tap to speak ingredients")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            if !speechVM.transcript.isEmpty {
+                Text(speechVM.transcript)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            if let error = speechVM.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if !speechVM.isRecording, !speechVM.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button("Review & Confirm") {
+                    reviewEntries = PantryInputProcessor.detectEntries(from: speechVM.transcript)
+                    reviewSource = .spoken
+                    reviewRawInput = speechVM.transcript
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var scanEntryContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            BarcodeScannerView(viewModel: scannerVM)
+                .frame(height: 240)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            if let status = scannerVM.statusText {
+                Text(status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+}
+
+struct ReviewConfirmView: View {
+    @Binding var entries: [DetectedPantryEntry]
+    var onConfirm: () -> Void
+
+    var body: some View {
+        List {
+            Section("Detected Items") {
+                ForEach($entries) { $entry in
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField("Detected text", text: $entry.rawText)
+                            .onSubmit { rematch(entryID: entry.id) }
+                        HStack {
+                            TextField("Ingredient", text: $entry.matchedIngredientName)
+                                .onSubmit { rematch(entryID: entry.id) }
+                            Spacer()
+                            confidenceBadge(entry.confidence)
+                        }
+                    }
+                }
+                .onDelete { offsets in
+                    entries.remove(atOffsets: offsets)
+                }
+            }
+        }
+        .navigationTitle("Review & Confirm")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Re-match all") {
+                    for idx in entries.indices {
+                        rematch(entryID: entries[idx].id)
+                    }
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Confirm") { onConfirm() }
+                    .disabled(entries.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func confidenceBadge(_ confidence: IngredientMatchConfidence) -> some View {
+        let label: String
+        let color: Color
+        switch confidence {
+        case .high:
+            label = "High"
+            color = .green
+        case .medium:
+            label = "Medium"
+            color = .orange
+        case .needsReview:
+            label = "Needs review"
+            color = .red
+        }
+
+        Text(label)
+            .font(.caption2.bold())
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(color.opacity(0.2))
+            .clipShape(Capsule())
+    }
+
+    private func rematch(entryID: UUID) {
+        guard let idx = entries.firstIndex(where: { $0.id == entryID }) else { return }
+        let updated = PantryInputProcessor.detectEntries(from: entries[idx].matchedIngredientName).first
+        if let updated {
+            entries[idx].matchedIngredientName = updated.matchedIngredientName
+            entries[idx].matchedIngredientID = updated.matchedIngredientID
+            entries[idx].confidence = updated.confidence
+        } else {
+            entries[idx].confidence = .needsReview
+            entries[idx].matchedIngredientID = nil
         }
     }
 }
@@ -722,6 +924,205 @@ struct MacroRing: View {
             .trim(from: 0, to: CGFloat(Double(value) / Double(nutrition.totalMacroGrams)))
             .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
             .rotationEffect(start)
+    }
+}
+
+@MainActor
+final class SpeechCaptureViewModel: NSObject, ObservableObject {
+    @Published var transcript = ""
+    @Published var isRecording = false
+    @Published var errorMessage: String?
+
+    private let recognizer = SFSpeechRecognizer()
+    private let audioEngine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+
+    func toggleRecording() {
+        isRecording ? stopRecording() : startRecording()
+    }
+
+    func startRecording() {
+        errorMessage = nil
+        transcript = ""
+
+        SFSpeechRecognizer.requestAuthorization { [weak self] auth in
+            guard auth == .authorized else {
+                Task { @MainActor in self?.errorMessage = "Speech permission denied." }
+                return
+            }
+            AVAudioApplication.requestRecordPermission { granted in
+                guard granted else {
+                    Task { @MainActor in self?.errorMessage = "Microphone permission denied." }
+                    return
+                }
+                Task { @MainActor in self?.beginSession() }
+            }
+        }
+    }
+
+    private func beginSession() {
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        self.request = request
+        request.shouldReportPartialResults = true
+
+        let input = audioEngine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            self?.request?.append(buffer)
+        }
+
+        audioEngine.prepare()
+        do {
+            try audioEngine.start()
+            isRecording = true
+        } catch {
+            errorMessage = "Unable to start audio engine."
+            return
+        }
+
+        task = recognizer?.recognitionTask(with: request) { [weak self] result, error in
+            guard let self else { return }
+            if let result {
+                Task { @MainActor in self.transcript = result.bestTranscription.formattedString }
+            }
+            if error != nil || result?.isFinal == true {
+                Task { @MainActor in self.stopRecording() }
+            }
+        }
+    }
+
+    func stopRecording() {
+        guard isRecording else { return }
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        request?.endAudio()
+        task?.cancel()
+        isRecording = false
+    }
+}
+
+@MainActor
+final class BarcodeScannerViewModel: NSObject, ObservableObject {
+    @Published var detectedCode: String?
+    @Published var statusText: String? = "Align barcode inside the frame"
+
+    private var lastCode: String?
+
+    func didScan(code: String) {
+        guard code != lastCode else { return }
+        lastCode = code
+        detectedCode = code
+        statusText = "Detected \(code). Looking up item…"
+    }
+
+    func resolveEntry(for code: String) async -> DetectedPantryEntry {
+        defer { statusText = "Align barcode inside the frame" }
+        guard let url = URL(string: "https://world.openfoodfacts.org/api/v0/product/\(code).json") else {
+            return PantryInputProcessor.detectBarcodeEntry(productName: nil, barcode: code)
+        }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let payload = try JSONDecoder().decode(OpenFoodFactsResponse.self, from: data)
+            return PantryInputProcessor.detectBarcodeEntry(productName: payload.product?.productName, barcode: code)
+        } catch {
+            statusText = "Lookup failed. You can still review and edit."
+            return PantryInputProcessor.detectBarcodeEntry(productName: nil, barcode: code)
+        }
+    }
+}
+
+private struct OpenFoodFactsResponse: Decodable {
+    let product: Product?
+
+    struct Product: Decodable {
+        let productName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case productName = "product_name"
+        }
+    }
+}
+
+struct BarcodeScannerView: UIViewControllerRepresentable {
+    @ObservedObject var viewModel: BarcodeScannerViewModel
+
+    func makeUIViewController(context: Context) -> ScannerViewController {
+        let vc = ScannerViewController()
+        vc.delegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(_ uiViewController: ScannerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(viewModel: viewModel)
+    }
+
+    final class Coordinator: NSObject, ScannerViewControllerDelegate {
+        private let viewModel: BarcodeScannerViewModel
+
+        init(viewModel: BarcodeScannerViewModel) {
+            self.viewModel = viewModel
+        }
+
+        func scannerViewController(_ controller: ScannerViewController, didDetect code: String) {
+            viewModel.didScan(code: code)
+        }
+    }
+}
+
+protocol ScannerViewControllerDelegate: AnyObject {
+    func scannerViewController(_ controller: ScannerViewController, didDetect code: String)
+}
+
+final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    weak var delegate: ScannerViewControllerDelegate?
+
+    private let session = AVCaptureSession()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        configureSession()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if !session.isRunning { session.startRunning() }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        if session.isRunning { session.stopRunning() }
+    }
+
+    private func configureSession() {
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device),
+              session.canAddInput(input)
+        else { return }
+
+        session.addInput(input)
+
+        let output = AVCaptureMetadataOutput()
+        guard session.canAddOutput(output) else { return }
+        session.addOutput(output)
+        output.setMetadataObjectsDelegate(self, queue: .main)
+        output.metadataObjectTypes = [.ean8, .ean13, .upce]
+
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+        preview.frame = view.layer.bounds
+        view.layer.addSublayer(preview)
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let value = object.stringValue
+        else { return }
+        delegate?.scannerViewController(self, didDetect: value)
     }
 }
 #endif
