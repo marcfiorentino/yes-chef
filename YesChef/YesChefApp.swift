@@ -75,12 +75,25 @@ final class YesChefAppModel: ObservableObject {
         refreshMatches()
     }
 
-    func addPantryItem(name: String, quantity: String) {
+    @discardableResult
+    func addPantryItem(name: String, quantity: String, requireSuggestionSelection: Bool = false) -> PantryItem? {
         pantry.updateEntryText(name)
-        guard pantry.confirmSave(quantity: quantity).isSome else { return }
+        guard let saved = pantry.confirmSave(quantity: quantity, requireSuggestionSelection: requireSuggestionSelection) else { return nil }
         save(pantry.pantryItems, key: Self.pantryKey)
         refreshMatches()
         objectWillChange.send()
+        return saved
+    }
+
+    @discardableResult
+    func savePendingPantryItem(quantity: String, requireSuggestionSelection: Bool = false) -> PantryItem? {
+        guard let saved = pantry.confirmSave(quantity: quantity, requireSuggestionSelection: requireSuggestionSelection) else {
+            return nil
+        }
+        save(pantry.pantryItems, key: Self.pantryKey)
+        refreshMatches()
+        objectWillChange.send()
+        return saved
     }
 
     @discardableResult
@@ -312,7 +325,6 @@ struct PantryTabView: View {
     @State private var processedSpeechTokenKeys: Set<String> = []
     @State private var lastSpeechTranscript = ""
     @State private var suggestionUpdateWorkItem: DispatchWorkItem?
-    @State private var suppressNextSuggestionRefresh = false
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
@@ -444,10 +456,16 @@ struct PantryTabView: View {
                     .frame(width: 72)
                     .textFieldStyle(.roundedBorder)
                 Button("Add") {
-                    appModel.addPantryItem(name: typedIngredient, quantity: quantity)
-                    typedIngredient = ""
-                    quantity = ""
-                    clearSuggestions()
+                    let addResult = appModel.addPantryItem(
+                        name: typedIngredient,
+                        quantity: quantity,
+                        requireSuggestionSelection: true
+                    )
+                    if addResult.isSome {
+                        typedIngredient = ""
+                        quantity = ""
+                        clearSuggestions()
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -476,9 +494,12 @@ struct PantryTabView: View {
                         ForEach(appModel.pantry.suggestions) { suggestion in
                             Button(suggestion.name) {
                                 appModel.pantry.chooseSuggestion(suggestion)
-                                suppressNextSuggestionRefresh = true
                                 typedIngredient = suggestion.name
-                                appModel.objectWillChange.send()
+                                if appModel.savePendingPantryItem(quantity: quantity, requireSuggestionSelection: true).isSome {
+                                    typedIngredient = ""
+                                    quantity = ""
+                                    clearSuggestions()
+                                }
                             }
                             .buttonStyle(.bordered)
                         }
@@ -494,11 +515,6 @@ struct PantryTabView: View {
 
     private func refreshSuggestionsDebounced(for value: String) {
         suggestionUpdateWorkItem?.cancel()
-
-        if suppressNextSuggestionRefresh {
-            suppressNextSuggestionRefresh = false
-            return
-        }
 
         let workItem = DispatchWorkItem {
             appModel.pantry.updateEntryText(value)
