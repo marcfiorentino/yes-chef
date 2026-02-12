@@ -13,3 +13,12 @@ Turn the ingredients you have into recipes you can cook now, with macros and die
 ### Notes
 - `YesChef` is the iOS SwiftUI app target.
 - `YesChefCore` is kept as a separate local Swift package module and is linked into the app target.
+
+
+## Ingredient catalog data
+- Source dataset: `Sources/YesChefCore/Resources/ingredient_catalog_source.json`
+- Runtime SQLite DB: generated on first launch in the app's Application Support directory from the bundled JSON source.
+- Optional prebuild/regeneration command for local verification:
+  ```bash
+  ./scripts/build_ingredient_catalog_db.py
+  ```

@@ -34,15 +34,23 @@ final class PantryInputProcessingTests: XCTestCase {
         XCTAssertEqual(phrases, ["eggs", "butter"])
     }
 
-    func testDetectEntriesMatchesSeededSynonyms() {
-        let entries = PantryInputProcessor.detectEntries(from: "evoo, chicken pepper")
+    func testDetectEntriesMatchesAliasesAndPrefixQueries() {
+        let entries = PantryInputProcessor.detectEntries(from: "evoo, chicke, pepp")
 
         XCTAssertEqual(entries.map(\.matchedIngredientName), ["Olive Oil", "Chicken Breast", "Black Pepper"])
         XCTAssertEqual(entries[0].confidence, .high)
-        XCTAssertEqual(entries[1].confidence, .high)
-        XCTAssertEqual(entries[2].confidence, .high)
+        XCTAssertEqual(entries[1].confidence, .medium)
+        XCTAssertEqual(entries[2].confidence, .medium)
         XCTAssertEqual(entries[0].quantity, "1")
         XCTAssertTrue(entries[0].isIncluded)
+        XCTAssertEqual(entries[0].matchedIngredientID, "4")
+    }
+
+    func testDetectEntriesUsesFuzzyFallback() {
+        let entries = PantryInputProcessor.detectEntries(from: "mozarela")
+
+        XCTAssertEqual(entries.first?.matchedIngredientName, "Mozzarella")
+        XCTAssertEqual(entries.first?.confidence, .medium)
     }
 
     func testDetectEntriesMarksUnknownTokenForReview() {
