@@ -34,7 +34,8 @@ public final class PantryViewModel {
             return nil
         }
 
-        guard !requireSuggestionSelection || hasSelectedSuggestion else {
+        let hasExactMatch = IngredientCatalog.hasExactMatch(for: pendingIngredientName)
+        guard !requireSuggestionSelection || hasSelectedSuggestion || hasExactMatch else {
             return nil
         }
 

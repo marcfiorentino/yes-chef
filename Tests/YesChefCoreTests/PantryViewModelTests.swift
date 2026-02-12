@@ -68,6 +68,15 @@ final class PantryViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.pantryItems.isEmpty)
     }
 
+    func testConfirmSaveAllowsExactMatchWithoutExplicitSelection() {
+        let viewModel = PantryViewModel()
+
+        viewModel.updateEntryText("Black pepper")
+
+        let saved = viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true)
+        XCTAssertEqual(saved?.ingredientName, "Black pepper")
+    }
+
     func testConfirmSaveSucceedsAfterChoosingSuggestionWhenSelectionRequired() {
         let viewModel = PantryViewModel()
         viewModel.updateEntryText("pep")
@@ -80,6 +89,18 @@ final class PantryViewModelTests: XCTestCase {
         let saved = viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true)
 
         XCTAssertEqual(saved?.ingredientName, "Black pepper")
+        XCTAssertEqual(viewModel.pantryItems.first?.ingredientName, "Black pepper")
+    }
+
+    func testPepDoesNotAddUnlessSuggestionSelectedOrExactlyTyped() {
+        let viewModel = PantryViewModel()
+
+        viewModel.updateEntryText("pep")
+        XCTAssertNil(viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true))
+        XCTAssertTrue(viewModel.pantryItems.isEmpty)
+
+        viewModel.updateEntryText("Black pepper")
+        XCTAssertNotNil(viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true))
         XCTAssertEqual(viewModel.pantryItems.first?.ingredientName, "Black pepper")
     }
 
