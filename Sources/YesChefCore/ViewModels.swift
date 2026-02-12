@@ -4,6 +4,7 @@ public final class PantryViewModel {
     public private(set) var pantryItems: [PantryItem]
     public private(set) var pendingIngredientName: String?
     public private(set) var suggestions: [Ingredient] = []
+    private var hasSelectedSuggestion = false
 
     public init(pantryItems: [PantryItem] = []) {
         self.pantryItems = pantryItems
@@ -15,6 +16,7 @@ public final class PantryViewModel {
 
     public func updateEntryText(_ text: String) {
         pendingIngredientName = text
+        hasSelectedSuggestion = false
         suggestions = IngredientCatalog.autocompleteSuggestions(for: text)
             .prefix(5)
             .map { $0 }
@@ -22,12 +24,17 @@ public final class PantryViewModel {
 
     public func chooseSuggestion(_ ingredient: Ingredient) {
         pendingIngredientName = ingredient.name
+        hasSelectedSuggestion = true
         suggestions = []
     }
 
     @discardableResult
-    public func confirmSave(quantity: String) -> PantryItem? {
+    public func confirmSave(quantity: String, requireSuggestionSelection: Bool = false) -> PantryItem? {
         guard let pendingIngredientName, !pendingIngredientName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+
+        guard !requireSuggestionSelection || hasSelectedSuggestion else {
             return nil
         }
 
@@ -42,6 +49,7 @@ public final class PantryViewModel {
         )
         pantryItems.insert(item, at: 0)
         self.pendingIngredientName = nil
+        hasSelectedSuggestion = false
         suggestions = []
         return item
     }

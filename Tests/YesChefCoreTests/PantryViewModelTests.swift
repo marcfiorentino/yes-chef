@@ -59,4 +59,28 @@ final class PantryViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.suggestions.isEmpty)
     }
 
+    func testConfirmSaveRequiresSuggestionSelectionWhenConfigured() {
+        let viewModel = PantryViewModel()
+
+        viewModel.updateEntryText("pep")
+
+        XCTAssertNil(viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true))
+        XCTAssertTrue(viewModel.pantryItems.isEmpty)
+    }
+
+    func testConfirmSaveSucceedsAfterChoosingSuggestionWhenSelectionRequired() {
+        let viewModel = PantryViewModel()
+        viewModel.updateEntryText("pep")
+        guard let suggestion = viewModel.suggestions.first(where: { $0.name == "Black pepper" }) else {
+            XCTFail("Expected Black pepper suggestion")
+            return
+        }
+
+        viewModel.chooseSuggestion(suggestion)
+        let saved = viewModel.confirmSave(quantity: "1", requireSuggestionSelection: true)
+
+        XCTAssertEqual(saved?.ingredientName, "Black pepper")
+        XCTAssertEqual(viewModel.pantryItems.first?.ingredientName, "Black pepper")
+    }
+
 }
