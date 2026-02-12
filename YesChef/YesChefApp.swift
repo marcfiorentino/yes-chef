@@ -43,6 +43,7 @@ final class YesChefAppModel: ObservableObject {
             refreshMatches()
         }
     }
+    @Published var ingredientCatalogStatus: IngredientCatalog.Status = .loading
 
     private static let pantryKey = "yeschef.pantry"
     private static let shopKey = "yeschef.shop"
@@ -73,6 +74,12 @@ final class YesChefAppModel: ObservableObject {
 
         hasOnboarded = UserDefaults.standard.bool(forKey: Self.hasOnboardedKey)
         refreshMatches()
+    }
+
+    func seedIngredientCatalogAtStartup() async {
+        ingredientCatalogStatus = .loading
+        await IngredientCatalog.seedAtStartup()
+        ingredientCatalogStatus = IngredientCatalog.status
     }
 
     @discardableResult
@@ -200,6 +207,9 @@ struct RootTabView: View {
             OnboardingFlowView()
                 .environmentObject(appModel)
         }
+        .task {
+            await appModel.seedIngredientCatalogAtStartup()
+        }
     }
 }
 
@@ -325,6 +335,7 @@ struct PantryTabView: View {
     @State private var processedSpeechTokenKeys: Set<String> = []
     @State private var lastSpeechTranscript = ""
     @State private var suggestionUpdateWorkItem: DispatchWorkItem?
+    @State private var typeInlineMessage: String?
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
@@ -449,12 +460,15 @@ struct PantryTabView: View {
                 TextField("Add ingredient", text: $typedIngredient)
                     .textInputAutocapitalization(.words)
                     .focused($isIngredientInputFocused)
+                    .disabled(isCatalogLoading)
                     .onChange(of: typedIngredient) { _, newValue in
+                        typeInlineMessage = nil
                         refreshSuggestionsDebounced(for: newValue)
                     }
                 TextField("Qty", text: $quantity)
                     .frame(width: 72)
                     .textFieldStyle(.roundedBorder)
+                    .disabled(isCatalogLoading)
                 Button("Add") {
                     let addResult = appModel.addPantryItem(
                         name: typedIngredient,
@@ -462,13 +476,28 @@ struct PantryTabView: View {
                         requireSuggestionSelection: true
                     )
                     if addResult.isSome {
+                        typeInlineMessage = nil
                         typedIngredient = ""
                         quantity = ""
                         clearSuggestions()
+                    } else {
+                        typeInlineMessage = "Pick a suggestion"
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(isCatalogLoading || typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            Text(catalogStatusLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let typeInlineMessage {
+                Text(typeInlineMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -495,11 +524,7 @@ struct PantryTabView: View {
                             Button(suggestion.name) {
                                 appModel.pantry.chooseSuggestion(suggestion)
                                 typedIngredient = suggestion.name
-                                if appModel.savePendingPantryItem(quantity: quantity, requireSuggestionSelection: true).isSome {
-                                    typedIngredient = ""
-                                    quantity = ""
-                                    clearSuggestions()
-                                }
+                                typeInlineMessage = nil
                             }
                             .buttonStyle(.bordered)
                         }
@@ -528,6 +553,24 @@ struct PantryTabView: View {
         suggestionUpdateWorkItem?.cancel()
         appModel.pantry.updateEntryText("")
         appModel.objectWillChange.send()
+    }
+
+    private var isCatalogLoading: Bool {
+        if case .loading = appModel.ingredientCatalogStatus {
+            return true
+        }
+        return false
+    }
+
+    private var catalogStatusLabel: String {
+        switch appModel.ingredientCatalogStatus {
+        case .loading:
+            return "Catalog: Loading…"
+        case .ready(let ingredientCount):
+            return "Catalog: Ready (\(ingredientCount) ingredients)"
+        case .fallback:
+            return "Catalog: Fallback mode"
+        }
     }
 
     @ViewBuilder

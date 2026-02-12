@@ -5,18 +5,37 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 
 struct IngredientCatalogDB: @unchecked Sendable {
     private let db: OpaquePointer?
+    private let usingFallback: Bool
     private let fallbackIngredients: [Ingredient]
     private let fallbackRows: [CatalogRow]
 
+    static let builtInFallbackIngredients = [
+        "Eggs",
+        "Milk",
+        "Butter",
+        "Spinach",
+        "Black pepper",
+        "Salt",
+        "Onion",
+        "Garlic"
+    ]
+
     init() {
-        fallbackIngredients = []
-        fallbackRows = []
+        fallbackIngredients = Self.builtInFallbackIngredients.map { Ingredient(name: $0) }
+        fallbackRows = Self.builtInFallbackIngredients.enumerated().map { index, name in
+            CatalogRow(
+                ingredientID: index + 1,
+                canonicalName: name,
+                aliasNormalized: Self.normalizeInput(name)
+            )
+        }
 
         guard
             let sourceURL = Bundle.module.url(forResource: "ingredient_catalog_source", withExtension: "json"),
             let destinationURL = try? Self.catalogDatabaseURL()
         else {
             db = nil
+            usingFallback = true
             return
         }
 
@@ -24,6 +43,7 @@ struct IngredientCatalogDB: @unchecked Sendable {
             try Self.ensureDatabaseExists(at: destinationURL, sourceJSONURL: sourceURL)
         } catch {
             db = nil
+            usingFallback = true
             return
         }
 
@@ -31,9 +51,15 @@ struct IngredientCatalogDB: @unchecked Sendable {
         if sqlite3_open_v2(destinationURL.path, &handle, SQLITE_OPEN_READONLY, nil) != SQLITE_OK {
             sqlite3_close(handle)
             db = nil
+            usingFallback = true
             return
         }
         db = handle
+        usingFallback = false
+    }
+
+    var isFallbackMode: Bool {
+        usingFallback
     }
 
     private static func catalogDatabaseURL() throws -> URL {
@@ -196,6 +222,12 @@ struct IngredientCatalogDB: @unchecked Sendable {
         return scoredMatch(from: fuzzy.row, score: fuzzy.score)
     }
 
+    func hasExactMatch(for phrase: String) -> Bool {
+        let normalized = Self.normalizeInput(phrase)
+        guard !normalized.isEmpty else { return false }
+        return exactAliasMatch(normalized: normalized) != nil
+    }
+
     func autocompleteSuggestions(for query: String) -> [Ingredient] {
         let normalized = Self.normalizeInput(query)
         guard !normalized.isEmpty else { return [] }
@@ -225,7 +257,9 @@ struct IngredientCatalogDB: @unchecked Sendable {
     }
 
     private func exactAliasMatch(normalized: String) -> CatalogRow? {
-        guard let db else { return nil }
+        guard let db else {
+            return fallbackRows.first(where: { $0.aliasNormalized == normalized })
+        }
         let sql = """
         SELECT i.id, i.canonical_name, a.alias_normalized
         FROM ingredient_aliases a
@@ -243,7 +277,11 @@ struct IngredientCatalogDB: @unchecked Sendable {
     }
 
     private func ftsPrefixCandidates(normalized: String) -> [CatalogRow] {
-        guard let db else { return [] }
+        guard let db else {
+            return fallbackRows.filter {
+                $0.aliasNormalized.hasPrefix(normalized) || Self.normalizeInput($0.canonicalName).hasPrefix(normalized)
+            }
+        }
         let terms = normalized
             .split(separator: " ")
             .map { "\($0)*" }

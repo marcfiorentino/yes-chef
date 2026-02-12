@@ -1,10 +1,57 @@
 import Foundation
 
 public struct IngredientCatalog {
-    private static let db = IngredientCatalogDB()
+    public enum Status: Equatable {
+        case loading
+        case ready(ingredientCount: Int)
+        case fallback
+    }
+
+    private static let lock = NSLock()
+    private static var db: IngredientCatalogDB?
+    private static var statusValue: Status = .loading
+    private static var bootstrapTask: Task<Void, Never>?
+
+    public static var status: Status {
+        lock.withLock { statusValue }
+    }
+
+    public static func seedAtStartup() async {
+        let task: Task<Void, Never> = lock.withLock {
+            if let bootstrapTask {
+                return bootstrapTask
+            }
+
+            let task = Task.detached(priority: .userInitiated) {
+                let seededDB = IngredientCatalogDB()
+                let seeded = seededDB.allIngredients
+                lock.withLock {
+                    db = seededDB
+                    statusValue = seededDB.isFallbackMode ? .fallback : .ready(ingredientCount: seeded.count)
+                }
+            }
+            bootstrapTask = task
+            return task
+        }
+
+        await task.value
+    }
+
+    private static func activeDB() -> IngredientCatalogDB {
+        lock.withLock {
+            if let db {
+                return db
+            }
+            let seededDB = IngredientCatalogDB()
+            self.db = seededDB
+            let seeded = seededDB.allIngredients
+            statusValue = seededDB.isFallbackMode ? .fallback : .ready(ingredientCount: seeded.count)
+            return seededDB
+        }
+    }
 
     public static var seeded: [Ingredient] {
-        db.allIngredients
+        activeDB().allIngredients
     }
 
     public static func canonicalName(for value: String) -> String {
@@ -23,11 +70,23 @@ public struct IngredientCatalog {
     }
 
     public static func matchIngredient(for phrase: String) -> IngredientMatch? {
-        db.matchIngredient(for: phrase)
+        activeDB().matchIngredient(for: phrase)
     }
 
     public static func autocompleteSuggestions(for query: String) -> [Ingredient] {
-        db.autocompleteSuggestions(for: query)
+        activeDB().autocompleteSuggestions(for: query)
+    }
+
+    public static func hasExactMatch(for phrase: String) -> Bool {
+        activeDB().hasExactMatch(for: phrase)
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }
 
