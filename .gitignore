@@ -4,3 +4,6 @@
 
 **/xcuserdata/
 **/*.xcuserstate
+
+Sources/YesChefCore/Resources/ingredient_catalog.sqlite
+**/*.sqlite

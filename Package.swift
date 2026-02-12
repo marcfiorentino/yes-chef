@@ -12,9 +12,13 @@ let package = Package(
     targets: [
         .target(
             name: "YesChefCore",
+            dependencies: ["CSQLite"],
             resources: [
                 .process("Resources")
             ]
+        ),
+        .systemLibrary(
+            name: "CSQLite"
         ),
         .testTarget(
             name: "YesChefCoreTests",

@@ -62,7 +62,7 @@ public enum PantryInputProcessor {
             return DetectedPantryEntry(
                 rawText: token,
                 matchedIngredientName: match.ingredient.name,
-                matchedIngredientID: IngredientCatalog.canonicalIdentifier(for: match.ingredient.name),
+                matchedIngredientID: String(match.ingredientID),
                 confidence: match.confidence
             )
         }
@@ -83,7 +83,7 @@ public enum PantryInputProcessor {
             return DetectedPantryEntry(
                 rawText: fallback,
                 matchedIngredientName: match.ingredient.name,
-                matchedIngredientID: IngredientCatalog.canonicalIdentifier(for: match.ingredient.name),
+                matchedIngredientID: String(match.ingredientID),
                 confidence: match.confidence,
                 barcode: barcode
             )
