@@ -307,11 +307,14 @@ struct PantryTabView: View {
     @State private var speakErrorHint: String?
     @State private var addBannerMessage: String?
     @State private var scanPresented = false
-    @State private var liveAddedIngredientNames: [String] = []
-    @State private var liveNeedsReviewEntries: [DetectedPantryEntry] = []
+    @State private var candidatesMatched: [DetectedPantryEntry] = []
+    @State private var candidatesUnmatched: [String] = []
     @State private var processedSpeechTokenKeys: Set<String> = []
+    @State private var lastSpeechTranscript = ""
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
+
+    private let speechMatchedConfidenceThreshold: IngredientMatchConfidence = .medium
 
     private let staples = ["Eggs", "Milk", "Chicken", "Rice", "Garlic", "Onion", "Olive Oil", "Salt", "Pepper"]
 
@@ -499,7 +502,7 @@ struct PantryTabView: View {
                 if speechVM.isRecording {
                     speechVM.stopRecording()
                     processSpokenTranscript(includeTrailingToken: true)
-                    presentNeedsReviewIfNeeded()
+                    autoAddMatchedCandidates()
                 } else {
                     resetLiveSpeechSessionState()
                     speechVM.startRecording()
@@ -521,11 +524,11 @@ struct PantryTabView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
-            if !liveAddedIngredientNames.isEmpty {
+            if !candidatesMatched.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Added")
+                    Text("Matched")
                         .font(.subheadline.weight(.semibold))
-                    Text(liveAddedIngredientNames.map { "\($0) ✓" }.joined(separator: ", "))
+                    Text(candidatesMatched.map { "\($0.matchedIngredientName) ✓" }.joined(separator: ", "))
                         .font(.subheadline)
                         .foregroundStyle(.green)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -533,18 +536,22 @@ struct PantryTabView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !liveNeedsReviewEntries.isEmpty {
+            if !candidatesUnmatched.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Needs review")
+                    Text("Unmatched (\(candidatesUnmatched.count))")
                         .font(.subheadline.weight(.semibold))
-                    ForEach(liveNeedsReviewEntries) { entry in
+                    ForEach(candidatesUnmatched, id: \.self) { item in
                         HStack {
-                            Text(entry.rawText)
+                            Text(item)
                             Spacer()
-                            Button("Add") {
-                                addReviewedEntry(entry)
+                            Button("Try match") {
+                                tryMatchUnmatchedCandidate(item)
                             }
                             .buttonStyle(.bordered)
+                            Button("Add anyway") {
+                                addUnmatchedCandidateAnyway(item)
+                            }
+                            .buttonStyle(.borderedProminent)
                         }
                         .font(.subheadline)
                     }
@@ -560,19 +567,11 @@ struct PantryTabView: View {
 
             if !speechVM.isRecording,
                !speechVM.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               liveNeedsReviewEntries.isEmpty,
-               liveAddedIngredientNames.isEmpty {
-                Button("Review & Add to Pantry") {
-                    let detected = PantryInputProcessor.detectEntries(from: speechVM.transcript)
-                    guard !detected.isEmpty else {
-                        speakErrorHint = "Didn’t catch that—try commas like ‘milk, eggs, basil’."
-                        return
-                    }
-                    speakErrorHint = nil
-                    reviewEntries = detected
-                    reviewSource = .spoken
-                    reviewRawInput = speechVM.transcript
-                    reviewSheetPresented = true
+               candidatesMatched.isEmpty,
+               candidatesUnmatched.isEmpty {
+                Button("Process speech") {
+                    processSpokenTranscript(includeTrailingToken: true)
+                    autoAddMatchedCandidates()
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -591,49 +590,95 @@ struct PantryTabView: View {
     }
 
     private func resetLiveSpeechSessionState() {
-        liveAddedIngredientNames = []
-        liveNeedsReviewEntries = []
+        candidatesMatched = []
+        candidatesUnmatched = []
         processedSpeechTokenKeys = []
+        lastSpeechTranscript = ""
         speakErrorHint = nil
     }
 
     private func processSpokenTranscript(includeTrailingToken: Bool) {
-        let tokens = PantryInputProcessor.parseTranscriptTokens(speechVM.transcript, includeTrailingToken: includeTrailingToken)
+        let transcript = speechVM.transcript
+        let hasTranscriptReplaced = !lastSpeechTranscript.isEmpty && !transcript.hasPrefix(lastSpeechTranscript)
+        if hasTranscriptReplaced {
+            candidatesMatched = []
+            candidatesUnmatched = []
+            processedSpeechTokenKeys = []
+        }
+        lastSpeechTranscript = transcript
+
+        let tokens = PantryInputProcessor.parseTranscriptTokens(transcript, includeTrailingToken: includeTrailingToken)
 
         for token in tokens {
             let tokenKey = token.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !tokenKey.isEmpty, processedSpeechTokenKeys.insert(tokenKey).inserted else { continue }
 
             let detected = PantryInputProcessor.detectEntry(from: token)
-            guard detected.confidence != .needsReview else {
-                liveNeedsReviewEntries.append(detected)
+            guard shouldTreatAsMatched(detected.confidence) else {
+                if !candidatesUnmatched.contains(where: { $0.caseInsensitiveCompare(detected.rawText) == .orderedSame }) {
+                    candidatesUnmatched.append(detected.rawText)
+                }
                 continue
             }
 
-            let added = appModel.addDetectedPantryEntries([detected], source: .spoken, rawInput: speechVM.transcript)
-            guard let addedItem = added.first else { continue }
-            if !liveAddedIngredientNames.contains(addedItem.ingredientName) {
-                liveAddedIngredientNames.append(addedItem.ingredientName)
+            let canonicalName = IngredientCatalog.canonicalName(for: detected.matchedIngredientName)
+            let alreadyMatched = candidatesMatched.contains {
+                if let lhs = $0.matchedIngredientID, let rhs = detected.matchedIngredientID {
+                    return lhs.caseInsensitiveCompare(rhs) == .orderedSame
+                }
+                return IngredientCatalog.canonicalName(for: $0.matchedIngredientName).caseInsensitiveCompare(canonicalName) == .orderedSame
+            }
+            if !alreadyMatched {
+                candidatesMatched.append(detected)
             }
         }
     }
 
-    private func addReviewedEntry(_ entry: DetectedPantryEntry) {
-        let normalized = entry.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func addUnmatchedCandidateAnyway(_ item: String) {
+        let normalized = item.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return }
-        let added = appModel.addDetectedPantryEntries([entry], source: .spoken, rawInput: speechVM.transcript)
-        if let firstAdded = added.first, !liveAddedIngredientNames.contains(firstAdded.ingredientName) {
-            liveAddedIngredientNames.append(firstAdded.ingredientName)
+        let custom = DetectedPantryEntry(rawText: normalized, matchedIngredientName: normalized, confidence: .needsReview)
+        let added = appModel.addDetectedPantryEntries([custom], source: .spoken, rawInput: speechVM.transcript)
+        if !added.isEmpty {
+            showAddBanner(count: added.count)
         }
-        liveNeedsReviewEntries.removeAll { $0.id == entry.id }
+        candidatesUnmatched.removeAll { $0.caseInsensitiveCompare(normalized) == .orderedSame }
     }
 
-    private func presentNeedsReviewIfNeeded() {
-        guard !liveNeedsReviewEntries.isEmpty else { return }
-        reviewEntries = liveNeedsReviewEntries
-        reviewSource = .spoken
-        reviewRawInput = speechVM.transcript
-        reviewSheetPresented = true
+    private func tryMatchUnmatchedCandidate(_ item: String) {
+        let detected = PantryInputProcessor.detectEntry(from: item)
+        guard shouldTreatAsMatched(detected.confidence) else {
+            speakErrorHint = "Couldn’t confidently match ‘\(item)’."
+            return
+        }
+        candidatesUnmatched.removeAll { $0.caseInsensitiveCompare(item) == .orderedSame }
+        candidatesMatched.append(detected)
+        let added = appModel.addDetectedPantryEntries([detected], source: .spoken, rawInput: speechVM.transcript)
+        if !added.isEmpty {
+            showAddBanner(count: added.count)
+        }
+    }
+
+    private func autoAddMatchedCandidates() {
+        guard !candidatesMatched.isEmpty else { return }
+        let added = appModel.addDetectedPantryEntries(candidatesMatched, source: .spoken, rawInput: speechVM.transcript)
+        if added.isEmpty {
+            speakErrorHint = candidatesUnmatched.isEmpty ? "No new ingredients to add." : nil
+            return
+        }
+        speakErrorHint = candidatesUnmatched.isEmpty ? nil : "\(candidatesUnmatched.count) unmatched item(s) need review."
+        showAddBanner(count: added.count)
+    }
+
+    private func shouldTreatAsMatched(_ confidence: IngredientMatchConfidence) -> Bool {
+        switch (confidence, speechMatchedConfidenceThreshold) {
+        case (.high, _), (.medium, .medium), (.medium, .needsReview):
+            return true
+        case (.needsReview, .needsReview):
+            return true
+        default:
+            return false
+        }
     }
 
     private func showAddBanner(count: Int) {

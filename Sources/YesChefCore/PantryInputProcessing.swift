@@ -10,18 +10,19 @@ public enum PantryInputProcessor {
             .replacingOccurrences(of: "\\band\\b|&", with: ",", options: .regularExpression)
             .replacingOccurrences(of: "\\n", with: ",")
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: " ", with: ",")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 
         var seen: Set<String> = []
         var results: [String] = []
 
         let endedWithSeparator = transcript.range(of: #"[\s,\n]$"#, options: .regularExpression) != nil
-        let parts = normalized.split(separator: ",", omittingEmptySubsequences: true)
+        let parts = normalized
+            .split(separator: ",", omittingEmptySubsequences: true)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap(expandPhraseHeuristically)
         let upperBound = includeTrailingToken || endedWithSeparator ? parts.count : max(0, parts.count - 1)
 
         for part in parts.prefix(upperBound) {
-            let cleaned = String(part).trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleaned = part.trimmingCharacters(in: .whitespacesAndNewlines)
             guard cleaned.count >= 2 else { continue }
             let key = cleaned.lowercased()
             if seen.insert(key).inserted {
@@ -30,6 +31,24 @@ public enum PantryInputProcessor {
         }
 
         return results
+    }
+
+    private static func expandPhraseHeuristically(_ phrase: String) -> [String] {
+        guard phrase.contains(" ") else { return [phrase] }
+
+        if let match = IngredientCatalog.matchIngredient(for: phrase), match.confidence == .high {
+            return [phrase]
+        }
+
+        let splitParts = phrase
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        if splitParts.count >= 3 {
+            return splitParts
+        }
+
+        return splitParts
     }
 
     public static func detectEntries(from transcript: String) -> [DetectedPantryEntry] {
