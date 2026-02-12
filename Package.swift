@@ -12,13 +12,13 @@ let package = Package(
     targets: [
         .target(
             name: "YesChefCore",
-            dependencies: ["CSQLite"],
+            dependencies: [],
             resources: [
                 .process("Resources")
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
             ]
-        ),
-        .systemLibrary(
-            name: "CSQLite"
         ),
         .testTarget(
             name: "YesChefCoreTests",
