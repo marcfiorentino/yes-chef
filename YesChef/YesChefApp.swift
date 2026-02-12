@@ -311,10 +311,13 @@ struct PantryTabView: View {
     @State private var candidatesUnmatched: [String] = []
     @State private var processedSpeechTokenKeys: Set<String> = []
     @State private var lastSpeechTranscript = ""
+    @State private var suggestionUpdateWorkItem: DispatchWorkItem?
+    @State private var suppressNextSuggestionRefresh = false
     @StateObject private var speechVM = SpeechCaptureViewModel()
     @StateObject private var scannerVM = BarcodeScannerViewModel()
 
     private let speechMatchedConfidenceThreshold: IngredientMatchConfidence = .medium
+    private let suggestionDebounceInterval: TimeInterval = 0.2
 
     private let staples = ["Eggs", "Milk", "Chicken", "Rice", "Garlic", "Onion", "Olive Oil", "Salt", "Pepper"]
 
@@ -435,8 +438,7 @@ struct PantryTabView: View {
                     .textInputAutocapitalization(.words)
                     .focused($isIngredientInputFocused)
                     .onChange(of: typedIngredient) { _, newValue in
-                        appModel.pantry.updateEntryText(newValue)
-                        appModel.objectWillChange.send()
+                        refreshSuggestionsDebounced(for: newValue)
                     }
                 TextField("Qty", text: $quantity)
                     .frame(width: 72)
@@ -445,6 +447,7 @@ struct PantryTabView: View {
                     appModel.addPantryItem(name: typedIngredient, quantity: quantity)
                     typedIngredient = ""
                     quantity = ""
+                    clearSuggestions()
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(typedIngredient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -460,6 +463,7 @@ struct PantryTabView: View {
                             typedIngredient = staple
                             appModel.addPantryItem(name: staple, quantity: "—")
                             typedIngredient = ""
+                            clearSuggestions()
                         }
                         .buttonStyle(.bordered)
                     }
@@ -472,6 +476,7 @@ struct PantryTabView: View {
                         ForEach(appModel.pantry.suggestions) { suggestion in
                             Button(suggestion.name) {
                                 appModel.pantry.chooseSuggestion(suggestion)
+                                suppressNextSuggestionRefresh = true
                                 typedIngredient = suggestion.name
                                 appModel.objectWillChange.send()
                             }
@@ -482,6 +487,31 @@ struct PantryTabView: View {
             }
         }
         .padding(.vertical, 4)
+        .onDisappear {
+            suggestionUpdateWorkItem?.cancel()
+        }
+    }
+
+    private func refreshSuggestionsDebounced(for value: String) {
+        suggestionUpdateWorkItem?.cancel()
+
+        if suppressNextSuggestionRefresh {
+            suppressNextSuggestionRefresh = false
+            return
+        }
+
+        let workItem = DispatchWorkItem {
+            appModel.pantry.updateEntryText(value)
+            appModel.objectWillChange.send()
+        }
+        suggestionUpdateWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + suggestionDebounceInterval, execute: workItem)
+    }
+
+    private func clearSuggestions() {
+        suggestionUpdateWorkItem?.cancel()
+        appModel.pantry.updateEntryText("")
+        appModel.objectWillChange.send()
     }
 
     @ViewBuilder

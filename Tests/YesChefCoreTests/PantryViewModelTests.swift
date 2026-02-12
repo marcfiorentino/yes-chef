@@ -36,4 +36,27 @@ final class PantryViewModelTests: XCTestCase {
         XCTAssertEqual(added.first?.ingredientName, "Milk")
         XCTAssertEqual(viewModel.pantryItems.count, 2)
     }
+
+    func testUpdateEntryTextProvidesAutocompleteSuggestionsForPartialInput() {
+        let viewModel = PantryViewModel()
+
+        viewModel.updateEntryText("sp")
+
+        XCTAssertTrue(viewModel.suggestions.contains(where: { $0.name == "Spinach" }))
+    }
+
+    func testChooseSuggestionClearsSuggestionsAndSetsPendingName() {
+        let viewModel = PantryViewModel()
+        viewModel.updateEntryText("sp")
+        guard let suggestion = viewModel.suggestions.first(where: { $0.name == "Spinach" }) else {
+            XCTFail("Expected Spinach suggestion")
+            return
+        }
+
+        viewModel.chooseSuggestion(suggestion)
+
+        XCTAssertEqual(viewModel.pendingIngredientName, "Spinach")
+        XCTAssertTrue(viewModel.suggestions.isEmpty)
+    }
+
 }
